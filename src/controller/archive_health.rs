@@ -35,9 +35,10 @@ impl ArchiveHealthResult {
         }
     }
 
-    /// Get a summary message for logging/events
     pub fn summary(&self) -> String {
-        if self.all_healthy {
+        if self.healthy_urls.is_empty() && self.unhealthy_urls.is_empty() {
+            "No archives configured".to_string()
+        } else if self.all_healthy {
             format!("All {} archive(s) healthy", self.healthy_urls.len())
         } else if self.any_healthy {
             format!(
@@ -250,5 +251,13 @@ mod tests {
         assert!(!result.all_healthy);
         assert!(!result.any_healthy);
         assert_eq!(result.summary(), "All 1 archive(s) unhealthy");
+    }
+
+    #[test]
+    fn test_health_result_empty() {
+        let result = ArchiveHealthResult::new(vec![], vec![]);
+        assert!(!result.all_healthy);
+        assert!(!result.any_healthy);
+        assert_eq!(result.summary(), "No archives configured");
     }
 }

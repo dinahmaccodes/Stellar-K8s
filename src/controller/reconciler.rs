@@ -20,7 +20,7 @@ use kube::{
 };
 use tracing::{error, info, instrument, warn};
 
-use crate::crd::{NodeType, StellarNode, StellarNodeStatus, Condition};
+use crate::crd::{NodeType, StellarNode, Condition};
 use crate::error::{Error, Result};
 
 use super::finalizers::STELLAR_NODE_FINALIZER;
@@ -376,15 +376,17 @@ async fn update_status(
             .and_then(|status| status.observed_generation)
     };
 
-    let status = StellarNodeStatus {
-        phase: phase.to_string(),
-        message: message.map(String::from),
-        observed_generation,
-        replicas: if node.spec.suspended { 0 } else { node.spec.replicas },
-        ..Default::default()
-    };
+    let mut status_patch = serde_json::json!({
+        "phase": phase,
+        "observedGeneration": observed_generation,
+        "replicas": if node.spec.suspended { 0 } else { node.spec.replicas },
+    });
 
-    let patch = serde_json::json!({ "status": status });
+    if let Some(msg) = message {
+        status_patch["message"] = serde_json::Value::String(msg.to_string());
+    }
+
+    let patch = serde_json::json!({ "status": status_patch });
     api.patch_status(
         &node.name_any(),
         &PatchParams::apply("stellar-operator"),
