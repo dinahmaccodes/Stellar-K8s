@@ -148,6 +148,39 @@ pub struct ValidatorConfig {
     /// Node is in catchup mode (syncing historical data)
     #[serde(default)]
     pub catchup_complete: bool,
+    /// Source of the validator seed (Secret or KMS)
+    #[serde(default)]
+    pub key_source: KeySource,
+    /// KMS configuration for fetching the validator seed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kms_config: Option<KmsConfig>,
+}
+
+/// Source of security keys
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum KeySource {
+    /// Use a standard Kubernetes Secret
+    #[default]
+    Secret,
+    /// Fetch keys from a cloud KMS or Vault via init container
+    KMS,
+}
+
+/// Configuration for cloud-native KMS or Vault
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct KmsConfig {
+    /// KMS Key ID, ARN, or Vault path (e.g., "alias/my-key" or "secret/stellar/validator-key")
+    pub key_id: String,
+    /// Provider name (e.g., "aws", "google", "vault")
+    pub provider: String,
+    /// Cloud region (e.g., "us-east-1", "europe-west1")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    /// Image to use for the KMS init container (default: stellar/kms-fetcher:latest)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fetcher_image: Option<String>,
 }
 
 /// Horizon API server configuration

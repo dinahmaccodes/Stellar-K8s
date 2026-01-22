@@ -25,7 +25,7 @@ use kube::api::{Api, DeleteParams, Patch, PatchParams, PostParams};
 use kube::{Client, Resource, ResourceExt};
 use tracing::{info, warn};
 
-use crate::crd::{IngressConfig, NodeType, StellarNode};
+use crate::crd::{IngressConfig, KeySource, NodeType, StellarNode};
 use crate::error::{Error, Result};
 
 /// Get the standard labels for a StellarNode's resources
@@ -607,37 +607,97 @@ pub async fn delete_ingress(client: &Client, node: &StellarNode) -> Result<()> {
 // ============================================================================
 
 fn build_pod_template(node: &StellarNode, labels: &BTreeMap<String, String>) -> PodTemplateSpec {
-    let container = build_container(node);
+    let mut pod_spec = PodSpec {
+        containers: vec![build_container(node)],
+        volumes: Some(vec![
+            Volume {
+                name: "data".to_string(),
+                persistent_volume_claim: Some(
+                    k8s_openapi::api::core::v1::PersistentVolumeClaimVolumeSource {
+                        claim_name: resource_name(node, "data"),
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            },
+            Volume {
+                name: "config".to_string(),
+                config_map: Some(k8s_openapi::api::core::v1::ConfigMapVolumeSource {
+                    name: Some(resource_name(node, "config")),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ]),
+        ..Default::default()
+    };
+
+    // Add KMS init container if needed (Validator nodes only)
+    if let NodeType::Validator = node.spec.node_type {
+        if let Some(validator_config) = &node.spec.validator_config {
+            if validator_config.key_source == KeySource::KMS {
+                if let Some(kms_config) = &validator_config.kms_config {
+                    // Add shared memory volume for keys (never touches disk)
+                    let volumes = pod_spec.volumes.get_or_insert_with(Vec::new);
+                    volumes.push(Volume {
+                        name: "keys".to_string(),
+                        empty_dir: Some(k8s_openapi::api::core::v1::EmptyDirVolumeSource {
+                            medium: Some("Memory".to_string()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+
+                    // Add KMS fetcher init container
+                    let init_containers = pod_spec.init_containers.get_or_insert_with(Vec::new);
+                    init_containers.push(Container {
+                        name: "kms-fetcher".to_string(),
+                        image: Some(
+                            kms_config
+                                .fetcher_image
+                                .clone()
+                                .unwrap_or_else(|| "stellar/kms-fetcher:latest".to_string()),
+                        ),
+                        env: Some(vec![
+                            EnvVar {
+                                name: "KMS_KEY_ID".to_string(),
+                                value: Some(kms_config.key_id.clone()),
+                                ..Default::default()
+                            },
+                            EnvVar {
+                                name: "KMS_PROVIDER".to_string(),
+                                value: Some(kms_config.provider.clone()),
+                                ..Default::default()
+                            },
+                            EnvVar {
+                                name: "KMS_REGION".to_string(),
+                                value: kms_config.region.clone(),
+                                ..Default::default()
+                            },
+                            EnvVar {
+                                name: "KEY_OUTPUT_PATH".to_string(),
+                                value: Some("/keys/validator-seed".to_string()),
+                                ..Default::default()
+                            },
+                        ]),
+                        volume_mounts: Some(vec![VolumeMount {
+                            name: "keys".to_string(),
+                            mount_path: "/keys".to_string(),
+                            ..Default::default()
+                        }]),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+    }
 
     PodTemplateSpec {
         metadata: Some(ObjectMeta {
             labels: Some(labels.clone()),
             ..Default::default()
         }),
-        spec: Some(PodSpec {
-            containers: vec![container],
-            volumes: Some(vec![
-                Volume {
-                    name: "data".to_string(),
-                    persistent_volume_claim: Some(
-                        k8s_openapi::api::core::v1::PersistentVolumeClaimVolumeSource {
-                            claim_name: resource_name(node, "data"),
-                            ..Default::default()
-                        },
-                    ),
-                    ..Default::default()
-                },
-                Volume {
-                    name: "config".to_string(),
-                    config_map: Some(k8s_openapi::api::core::v1::ConfigMapVolumeSource {
-                        name: Some(resource_name(node, "config")),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-            ]),
-            ..Default::default()
-        }),
+        spec: Some(pod_spec),
     }
 }
 
@@ -675,6 +735,37 @@ fn build_container(node: &StellarNode) -> Container {
         ..Default::default()
     }];
 
+    // Source validator seed from Secret or shared RAM volume (KMS)
+    if let NodeType::Validator = node.spec.node_type {
+        if let Some(validator_config) = &node.spec.validator_config {
+            match validator_config.key_source {
+                KeySource::Secret => {
+                    env_vars.push(EnvVar {
+                        name: "STELLAR_CORE_SEED".to_string(),
+                        value: None,
+                        value_from: Some(EnvVarSource {
+                            secret_key_ref: Some(SecretKeySelector {
+                                name: Some(validator_config.seed_secret_ref.clone()),
+                                key: "STELLAR_CORE_SEED".to_string(),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                KeySource::KMS => {
+                    // Seed will be read from /keys/validator-seed file provided by init container
+                    env_vars.push(EnvVar {
+                        name: "STELLAR_CORE_SEED_PATH".to_string(),
+                        value: Some("/keys/validator-seed".to_string()),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+    }
+
     // Add database environment variable from secret if external database is configured
     if let Some(db_config) = &node.spec.database {
         env_vars.push(EnvVar {
@@ -691,6 +782,34 @@ fn build_container(node: &StellarNode) -> Container {
         });
     }
 
+    let mut volume_mounts = vec![
+        VolumeMount {
+            name: "data".to_string(),
+            mount_path: data_mount_path.to_string(),
+            ..Default::default()
+        },
+        VolumeMount {
+            name: "config".to_string(),
+            mount_path: "/config".to_string(),
+            read_only: Some(true),
+            ..Default::default()
+        },
+    ];
+
+    // Mount keys volume if using KMS
+    if let NodeType::Validator = node.spec.node_type {
+        if let Some(validator_config) = &node.spec.validator_config {
+            if validator_config.key_source == KeySource::KMS {
+                volume_mounts.push(VolumeMount {
+                    name: "keys".to_string(),
+                    mount_path: "/keys".to_string(),
+                    read_only: Some(true),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
     Container {
         name: "stellar-node".to_string(),
         image: Some(node.spec.container_image()),
@@ -704,19 +823,7 @@ fn build_container(node: &StellarNode) -> Container {
             limits: Some(limits),
             claims: None,
         }),
-        volume_mounts: Some(vec![
-            VolumeMount {
-                name: "data".to_string(),
-                mount_path: data_mount_path.to_string(),
-                ..Default::default()
-            },
-            VolumeMount {
-                name: "config".to_string(),
-                mount_path: "/config".to_string(),
-                read_only: Some(true),
-                ..Default::default()
-            },
-        ]),
+        volume_mounts: Some(volume_mounts),
         ..Default::default()
     }
 }
