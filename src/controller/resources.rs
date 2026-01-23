@@ -1143,7 +1143,9 @@ fn build_pod_template(node: &StellarNode, labels: &BTreeMap<String, String>) -> 
                 }),
                 ..Default::default()
             },
+            
         ]),
+        topology_spread_constraints: node.spec.topology_spread_constraints.clone(),
         ..Default::default()
     };
 

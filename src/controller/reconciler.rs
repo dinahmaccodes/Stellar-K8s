@@ -18,7 +18,9 @@ use kube::{
 };
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::crd::{Condition, NodeType, StellarNode, StellarNodeStatus};
+use crate::crd::{
+    AutoscalingConfig, Condition, IngressConfig, NodeType, StellarNode, StellarNodeStatus,
+};
 use crate::error::{Error, Result};
 
 // Constants
