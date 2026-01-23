@@ -11,6 +11,7 @@ use crate::controller::ControllerState;
 use crate::error::{Error, Result};
 
 use super::handlers;
+use super::custom_metrics;
 
 /// Metrics endpoint handler
 async fn metrics_handler() -> String {
@@ -27,6 +28,8 @@ pub async fn run_server(state: Arc<ControllerState>) -> Result<()> {
         .route("/metrics", get(metrics_handler))
         .route("/api/v1/nodes", get(handlers::list_nodes))
         .route("/api/v1/nodes/:namespace/:name", get(handlers::get_node))
+        .route("/apis/custom.metrics.k8s.io/v1beta2/namespaces/:namespace/pods/:name/:metric", get(custom_metrics::get_pod_metric))
+        .route("/apis/custom.metrics.k8s.io/v1beta2/namespaces/:namespace/stellarnodes.stellar.org/:name/:metric", get(custom_metrics::get_stellar_node_metric))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 

@@ -5,5 +5,6 @@
 mod dto;
 mod handlers;
 mod server;
+mod custom_metrics;
 
 pub use server::run_server;

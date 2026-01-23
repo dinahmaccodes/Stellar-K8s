@@ -1,6 +1,4 @@
-//! Main reconciler for StellarNode resources
-//!
-//! Implements the controller pattern using kube-rs runtime.
+
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,7 +19,7 @@ use kube::{
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::crd::{
-    Condition, NodeType, StellarNode, StellarNodeStatus,
+    AutoscalingConfig, Condition, IngressConfig, NodeType, StellarNode, StellarNodeStatus,
 };
 use crate::error::{Error, Result};
 
@@ -163,7 +161,7 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
     // 2. Handle suspension
     if node.spec.suspended {
         info!("Node {}/{} is suspended, scaling to 0", namespace, name);
-        
+
         resources::ensure_pvc(client, node).await?;
         resources::ensure_config_map(client, node, None).await?;
         
@@ -175,11 +173,11 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
                 resources::ensure_deployment(client, node).await?;
             }
         }
-        
+
         resources::ensure_service(client, node).await?;
-        
+
         update_suspended_status(client, node).await?;
-        
+
         return Ok(Action::requeue(Duration::from_secs(60)));
     }
 
@@ -350,7 +348,10 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
             if remediation::can_remediate(node) {
                 match stale_check.recommended_action {
                     remediation::RemediationLevel::Restart => {
-                        info!("Initiating pod restart remediation for {}/{}", namespace, name);
+                        info!(
+                            "Initiating pod restart remediation for {}/{}",
+                            namespace, name
+                        );
 
                         // Emit event before remediation
                         remediation::emit_remediation_event(
@@ -460,7 +461,7 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
     };
 
     // 6. Update status with health check results
-    
+
     // 7. Update status with health check results
     update_status_with_health(client, node, phase, Some(&message), &health_result).await?;
 
@@ -503,6 +504,20 @@ async fn apply_stellar_node(client: &Client, node: &StellarNode) -> Result<Actio
                 node.spec.network.passphrase(),
                 seq,
             );
+
+            // Calculate ingestion lag if we can get the latest network ledger
+            // For now we assume we have a way to track the "latest" known ledger across the cluster
+            // or fetch it from a public horizon.
+            if let Some(network_latest) = get_latest_network_ledger(&node.spec.network).await.ok() {
+                let lag = (network_latest as i64) - (seq as i64);
+                metrics::set_ingestion_lag(
+                    &namespace,
+                    &name,
+                    &node.spec.node_type.to_string(),
+                    node.spec.network.passphrase(),
+                    lag.max(0),
+                );
+            }
         }
     }
 
@@ -661,7 +676,9 @@ async fn update_suspended_status(client: &Client, node: &StellarNode) -> Result<
         status: "False".to_string(),
         last_transition_time: chrono::Utc::now().to_rfc3339(),
         reason: "NodeSuspended".to_string(),
-        message: "Node is offline - replicas scaled to 0. Service remains active for peer discovery.".to_string(),
+        message:
+            "Node is offline - replicas scaled to 0. Service remains active for peer discovery."
+                .to_string(),
     };
 
     let status = StellarNodeStatus {
@@ -852,6 +869,23 @@ async fn update_status_with_health(
     .map_err(Error::KubeError)?;
 
     Ok(())
+}
+
+/// Helper to get the latest ledger from the Stellar network
+async fn get_latest_network_ledger(network: &crate::crd::StellarNetwork) -> Result<u64> {
+    let url = match network {
+        crate::crd::StellarNetwork::Mainnet => "https://horizon.stellar.org",
+        crate::crd::StellarNetwork::Testnet => "https://horizon-testnet.stellar.org",
+        crate::crd::StellarNetwork::Futurenet => "https://horizon-futurenet.stellar.org",
+        crate::crd::StellarNetwork::Custom(_) => return Err(Error::ConfigError("Custom network not supported for lag calculation yet".to_string())),
+    };
+
+    let client = reqwest::Client::new();
+    let resp = client.get(url).send().await.map_err(Error::HttpError)?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| Error::ConfigError(e.to_string()))?;
+    
+    let ledger = json["history_latest_ledger"].as_u64().ok_or_else(|| Error::ConfigError("Failed to get latest ledger from horizon".to_string()))?;
+    Ok(ledger)
 }
 
 /// Error policy determines how to handle reconciliation errors
