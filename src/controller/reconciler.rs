@@ -1,6 +1,23 @@
 //! Main reconciler for StellarNode resources
 //!
 //! Implements the controller pattern using kube-rs runtime.
+//! The reconciler watches StellarNode resources and ensures that the desired state
+//! (as specified in the StellarNode spec) matches the actual state in the Kubernetes cluster.
+//!
+//! # Key Components
+//!
+//! - [`ControllerState`] - Shared state for the controller including the Kubernetes client
+//! - [`run_controller`] - Main entry point that starts the controller loop
+//!
+//! # Reconciliation Workflow
+//!
+//! 1. Watch for changes to StellarNode resources
+//! 2. Validate the StellarNode spec
+//! 3. Create/update Kubernetes resources (Deployments, Services, PVCs, etc.)
+//! 4. Check node health and sync status
+//! 5. Handle node remediation if needed
+//! 6. Update StellarNode status with current state
+//! 7. Schedule requeue for periodic health checks
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,11 +53,46 @@ use super::remediation;
 use super::resources;
 
 /// Shared state for the controller
+///
+/// Holds the Kubernetes client and any other shared resources needed by the reconciler.
+/// This state is passed to reconcile functions and is used to interact with the Kubernetes API.
 pub struct ControllerState {
+    /// Kubernetes client for API interactions
     pub client: Client,
 }
 
 /// Main entry point to start the controller
+///
+/// Initializes and runs the Kubernetes controller loop. The controller:
+/// - Watches all StellarNode resources in the cluster
+/// - Watches owned resources (Deployments, StatefulSets, Services, PVCs)
+/// - Calls the reconcile function whenever a resource changes
+/// - Runs until the process receives a shutdown signal
+///
+/// # Arguments
+///
+/// * `state` - Controller state containing the Kubernetes client
+///
+/// # Returns
+///
+/// Returns `Ok(())` on successful controller shutdown, or an error if the CRD is not installed
+/// or another initialization error occurs.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use std::sync::Arc;
+/// use stellar_k8s::controller::{ControllerState, run_controller};
+/// use kube::Client;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let client = Client::try_default().await?;
+///     let state = Arc::new(ControllerState { client });
+///     run_controller(state).await?;
+///     Ok(())
+/// }
+/// ```
 pub async fn run_controller(state: Arc<ControllerState>) -> Result<()> {
     let client = state.client.clone();
     let stellar_nodes: Api<StellarNode> = Api::all(client.clone());
