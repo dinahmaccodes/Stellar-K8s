@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use super::types::{
     AutoscalingConfig, Condition, ExternalDatabaseConfig, HorizonConfig, IngressConfig, NodeType,
-    ResourceRequirements, RetentionPolicy, SorobanConfig, StellarNetwork, StorageConfig,
-    ValidatorConfig,
+    ResourceRequirements, RetentionPolicy, RolloutStrategy, SorobanConfig, StellarNetwork,
+    StorageConfig, ValidatorConfig,
 };
 
 /// The StellarNode CRD represents a managed Stellar infrastructure node.
@@ -119,6 +119,10 @@ pub struct StellarNodeSpec {
     /// Ingress configuration for HTTPS exposure via an ingress controller and cert-manager
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ingress: Option<IngressConfig>,
+
+    /// Rollout strategy for updates (RollingUpdate or Canary)
+    #[serde(default)]
+    pub strategy: RolloutStrategy,
 }
 
 fn default_replicas() -> i32 {
@@ -141,6 +145,9 @@ impl StellarNodeSpec {
                 }
                 if self.ingress.is_some() {
                     return Err("ingress is not supported for Validator nodes".to_string());
+                }
+                if matches!(self.strategy, RolloutStrategy::Canary(_)) {
+                    return Err("Canary rollout is not supported for Validator nodes".to_string());
                 }
             }
             NodeType::Horizon => {
@@ -262,6 +269,14 @@ pub struct StellarNodeStatus {
     /// Total number of desired replicas
     #[serde(default)]
     pub replicas: i32,
+
+    /// Version of the canary deployment (if active)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canary_version: Option<String>,
+
+    /// Number of ready replicas for the canary deployment
+    #[serde(default)]
+    pub canary_ready_replicas: i32,
 }
 
 impl StellarNodeStatus {
@@ -282,5 +297,81 @@ impl StellarNodeStatus {
     /// Check if the node is ready
     pub fn is_ready(&self) -> bool {
         self.phase == "Ready" && self.ready_replicas >= self.replicas
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crd::types::{CanaryConfig, RolloutStrategy};
+
+    #[test]
+    fn test_validator_with_canary_should_fail() {
+        let spec = StellarNodeSpec {
+            node_type: NodeType::Validator,
+            network: StellarNetwork::Testnet,
+            version: "v21.0.0".to_string(),
+            resources: Default::default(),
+            storage: Default::default(),
+            validator_config: Some(ValidatorConfig {
+                seed_secret_ref: "test".to_string(),
+                quorum_set: None,
+                enable_history_archive: false,
+                history_archive_urls: vec![],
+                catchup_complete: false,
+                key_source: Default::default(),
+                kms_config: None,
+            }),
+            horizon_config: None,
+            soroban_config: None,
+            replicas: 1,
+            suspended: false,
+            alerting: false,
+            database: None,
+            autoscaling: None,
+            ingress: None,
+            strategy: RolloutStrategy::Canary(CanaryConfig {
+                weight: 10,
+                check_interval_seconds: 300,
+            }),
+        };
+
+        assert!(spec.validate().is_err());
+        assert_eq!(
+            spec.validate().unwrap_err(),
+            "Canary rollout is not supported for Validator nodes"
+        );
+    }
+
+    #[test]
+    fn test_horizon_with_canary_should_pass() {
+        let spec = StellarNodeSpec {
+            node_type: NodeType::Horizon,
+            network: StellarNetwork::Testnet,
+            version: "v21.0.0".to_string(),
+            resources: Default::default(),
+            storage: Default::default(),
+            validator_config: None,
+            horizon_config: Some(HorizonConfig {
+                database_secret_ref: "test".to_string(),
+                enable_ingest: true,
+                stellar_core_url: "http://core".to_string(),
+                ingest_workers: 1,
+                enable_experimental_ingestion: false,
+            }),
+            soroban_config: None,
+            replicas: 3,
+            suspended: false,
+            alerting: false,
+            database: None,
+            autoscaling: None,
+            ingress: None,
+            strategy: RolloutStrategy::Canary(CanaryConfig {
+                weight: 20,
+                check_interval_seconds: 300,
+            }),
+        };
+
+        assert!(spec.validate().is_ok());
     }
 }

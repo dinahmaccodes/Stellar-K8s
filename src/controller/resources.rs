@@ -25,7 +25,7 @@ use kube::api::{Api, DeleteParams, Patch, PatchParams, PostParams};
 use kube::{Client, Resource, ResourceExt};
 use tracing::{info, warn};
 
-use crate::crd::{IngressConfig, KeySource, NodeType, StellarNode};
+use crate::crd::{IngressConfig, KeySource, NodeType, RolloutStrategy, StellarNode};
 use crate::error::{Error, Result};
 
 /// Get the standard labels for a StellarNode's resources
@@ -266,6 +266,47 @@ pub async fn ensure_deployment(client: &Client, node: &StellarNode) -> Result<()
     Ok(())
 }
 
+/// Ensure a canary Deployment exists if needed
+pub async fn ensure_canary_deployment(client: &Client, node: &StellarNode) -> Result<()> {
+    let canary_version = match node.status.as_ref().and_then(|status| status.canary_version.as_ref()) {
+        Some(v) => v,
+        None => return Ok(()),
+    };
+
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let api: Api<Deployment> = Api::namespaced(client.clone(), &namespace);
+    let name = format!("{}-canary", node.name_any());
+
+    let mut canary_node = node.clone();
+    canary_node.spec.version = canary_version.clone();
+    
+    let mut deployment = build_deployment(&canary_node);
+    deployment.metadata.name = Some(name.clone());
+    
+    // Update labels and selectors to include canary label
+    if let Some(spec) = &mut deployment.spec {
+        let mut labels = spec.template.metadata.as_ref().and_then(|m| m.labels.clone()).unwrap_or_default();
+        labels.insert("stellar.org/rollout-type".to_string(), "canary".to_string());
+        spec.template.metadata.as_mut().unwrap().labels = Some(labels.clone());
+        spec.selector.match_labels = Some(labels.clone());
+        
+        let meta = &mut deployment.metadata;
+        let mut meta_labels = meta.labels.clone().unwrap_or_default();
+        meta_labels.insert("stellar.org/rollout-type".to_string(), "canary".to_string());
+        meta.labels = Some(meta_labels);
+    }
+
+    let patch = Patch::Apply(&deployment);
+    api.patch(
+        &name,
+        &PatchParams::apply("stellar-operator").force(),
+        &patch,
+    )
+    .await?;
+
+    Ok(())
+}
+
 fn build_deployment(node: &StellarNode) -> Deployment {
     let labels = standard_labels(node);
     let name = node.name_any();
@@ -402,6 +443,41 @@ pub async fn ensure_service(client: &Client, node: &StellarNode) -> Result<()> {
     Ok(())
 }
 
+/// Ensure a canary Service exists if needed
+pub async fn ensure_canary_service(client: &Client, node: &StellarNode) -> Result<()> {
+    if node.status.as_ref().and_then(|status| status.canary_version.as_ref()).is_none() {
+        return Ok(());
+    }
+
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let api: Api<Service> = Api::namespaced(client.clone(), &namespace);
+    let name = format!("{}-canary", node.name_any());
+
+    let mut service = build_service(node);
+    service.metadata.name = Some(name.clone());
+    
+    if let Some(spec) = &mut service.spec {
+        let mut selector = spec.selector.clone().unwrap_or_default();
+        selector.insert("stellar.org/rollout-type".to_string(), "canary".to_string());
+        spec.selector = Some(selector);
+        
+        let meta = &mut service.metadata;
+        let mut labels = meta.labels.clone().unwrap_or_default();
+        labels.insert("stellar.org/rollout-type".to_string(), "canary".to_string());
+        meta.labels = Some(labels);
+    }
+
+    let patch = Patch::Apply(&service);
+    api.patch(
+        &name,
+        &PatchParams::apply("stellar-operator").force(),
+        &patch,
+    )
+    .await?;
+
+    Ok(())
+}
+
 fn build_service(node: &StellarNode) -> Service {
     let labels = standard_labels(node);
     let name = node.name_any();
@@ -498,6 +574,53 @@ pub async fn ensure_ingress(client: &Client, node: &StellarNode) -> Result<()> {
     .await?;
 
     info!("Ingress ensured for {}/{}", namespace, name);
+    
+    // If canary is active, ensure canary ingress as well
+    if let RolloutStrategy::Canary(ref cfg) = node.spec.strategy {
+        if node.status.as_ref().and_then(|status| status.canary_version.as_ref()).is_some() {
+            let canary_name = format!("{}-canary", name);
+            let mut canary_ingress = build_ingress(node, ingress_cfg);
+            canary_ingress.metadata.name = Some(canary_name.clone());
+            
+            // Add canary annotations
+            let mut annotations = canary_ingress.metadata.annotations.clone().unwrap_or_default();
+            annotations.insert("nginx.ingress.kubernetes.io/canary".to_string(), "true".to_string());
+            annotations.insert("nginx.ingress.kubernetes.io/canary-weight".to_string(), cfg.weight.to_string());
+            
+            // Support for Traefik and Istio (Istio usually needs VirtualService, but some setups use Ingress annotations)
+            annotations.insert("traefik.ingress.kubernetes.io/service.weights".to_string(), format!("{}:{}", node.name_any(), cfg.weight));
+            
+            canary_ingress.metadata.annotations = Some(annotations);
+            
+            // Update backend to point to canary service
+            if let Some(spec) = &mut canary_ingress.spec {
+                if let Some(rules) = &mut spec.rules {
+                    for rule in rules {
+                        if let Some(http) = &mut rule.http {
+                            for path in &mut http.paths {
+                                if let Some(backend) = &mut path.backend.service {
+                                    backend.name = format!("{}-canary", node.name_any());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            api.patch(
+                &canary_name,
+                &PatchParams::apply("stellar-operator").force(),
+                &Patch::Apply(&canary_ingress),
+            )
+            .await?;
+            info!("Canary Ingress ensured for {}/{}", namespace, canary_name);
+        } else {
+            // Delete canary ingress if no longer active
+            let canary_name = format!("{}-canary", name);
+            let _ = api.delete(&canary_name, &DeleteParams::default()).await;
+        }
+    }
+
     Ok(())
 }
 
@@ -1079,6 +1202,29 @@ pub async fn delete_alerting(client: &Client, node: &StellarNode) -> Result<()> 
         }
         Err(e) => return Err(Error::KubeError(e)),
     }
+
+    Ok(())
+}
+
+/// Delete canary resources specifically
+pub async fn delete_canary_resources(client: &Client, node: &StellarNode) -> Result<()> {
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let name = node.name_any();
+    let canary_name = format!("{}-canary", name);
+
+    // 1. Delete Canary Ingress
+    if node.spec.ingress.is_some() {
+        let api: Api<Ingress> = Api::namespaced(client.clone(), &namespace);
+        let _ = api.delete(&canary_name, &DeleteParams::default()).await;
+    }
+
+    // 2. Delete Canary Service
+    let api_svc: Api<Service> = Api::namespaced(client.clone(), &namespace);
+    let _ = api_svc.delete(&canary_name, &DeleteParams::default()).await;
+
+    // 3. Delete Canary Deployment
+    let api_deploy: Api<Deployment> = Api::namespaced(client.clone(), &namespace);
+    let _ = api_deploy.delete(&canary_name, &DeleteParams::default()).await;
 
     Ok(())
 }
