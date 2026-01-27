@@ -1493,10 +1493,10 @@ fn build_pod_template(
                     let containers = &mut pod_spec.containers;
                     containers.push(Container {
                         name: "cloudhsm-client".to_string(),
-                        // Use a standard image or user-provided one. 
+                        // Use a standard image or user-provided one.
                         // In reality, user would likely build this or we'd default to a known working one.
                         // For now, using a placeholder that needs to be valid.
-                        image: Some("amazon/cloudhsm-client:latest".to_string()), 
+                        image: Some("amazon/cloudhsm-client:latest".to_string()),
                         command: Some(vec!["/opt/cloudhsm/bin/cloudhsm_client".to_string()]),
                         args: Some(vec!["--foreground".to_string()]),
                         volume_mounts: Some(vec![VolumeMount {
