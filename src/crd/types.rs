@@ -241,6 +241,31 @@ pub struct VpaConfig {
     pub container_policies: Vec<VpaContainerPolicy>,
 }
 
+/// Forensic snapshot bundle upload (S3-compatible via AWS CLI in ephemeral capture).
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ForensicSnapshotConfig {
+    /// Target S3 bucket for the encrypted forensic tarball.
+    pub s3_bucket: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3_prefix: Option<String>,
+
+    /// Optional KMS key id for SSE-KMS (`aws s3 cp --sse aws:kms`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kms_key_id: Option<String>,
+
+    /// Secret in the same namespace with `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+    /// when not using IRSA/instance roles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials_secret_ref: Option<String>,
+
+    /// Set `shareProcessNamespace: true` on validator pods so the capture container
+    /// can see `stellar-core` for core dumps (recommended for forensic workflows).
+    #[serde(default)]
+    pub enable_share_process_namespace: bool,
+}
+
 /// Validator-specific configuration
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -307,6 +332,7 @@ impl ValidatorConfig {
                 }),
                 external_ref: None,
                 csi_ref: None,
+                vault_ref: None,
             });
         }
         None

@@ -100,6 +100,46 @@ spec:
                         type: string
                     catchupComplete:
                       type: boolean
+                    seedSecretSource:
+                      type: object
+                      description: Typed seed source; exactly one of localRef, externalRef, csiRef, vaultRef.
+                      properties:
+                        localRef:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        externalRef:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        csiRef:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        vaultRef:
+                          type: object
+                          properties:
+                            role:
+                              type: string
+                            secretPath:
+                              type: string
+                            secretKey:
+                              type: string
+                              nullable: true
+                            secretFileName:
+                              type: string
+                              nullable: true
+                            template:
+                              type: string
+                              nullable: true
+                            restartOnSecretRotation:
+                              type: boolean
+                            extraPodAnnotations:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  name:
+                                    type: string
+                                  value:
+                                    type: string
                 horizonConfig:
                   type: object
                   properties:
@@ -200,6 +240,12 @@ spec:
                   type: integer
                 replicas:
                   type: integer
+                vaultObservedSecretVersion:
+                  type: string
+                  description: Last Vault secret version observed for rotation-driven rollouts.
+                forensicSnapshotPhase:
+                  type: string
+                  description: Phase of forensic snapshot (Capturing, Complete, Failed).
       subresources:
         status: {}
       additionalPrinterColumns:

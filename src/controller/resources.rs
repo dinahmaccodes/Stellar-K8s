@@ -1218,6 +1218,14 @@ fn build_pod_template(
         ..Default::default()
     };
 
+    if node.spec.node_type == NodeType::Validator {
+        if let Some(fs) = &node.spec.forensic_snapshot {
+            if fs.enable_share_process_namespace {
+                pod_spec.share_process_namespace = Some(true);
+            }
+        }
+    }
+
     // Add Horizon database migration init container
     if let NodeType::Horizon = node.spec.node_type {
         if let Some(horizon_config) = &node.spec.horizon_config {
@@ -1356,12 +1364,22 @@ fn build_pod_template(
     }
     // ==========================================================================
 
+    let mut pod_object_meta = ObjectMeta {
+        labels: Some(labels.clone()),
+        annotations: None,
+        ..Default::default()
+    };
+    if let Some(inj) = seed_injection {
+        if let Some(ann) = inj.pod_annotations() {
+            let mut merged = pod_object_meta.annotations.unwrap_or_default();
+            merged.extend(ann.iter().map(|(k, v)| (k.clone(), v.clone())));
+            pod_object_meta.annotations = Some(merged);
+        }
+    }
+
     PodTemplateSpec {
         metadata: Some(merge_resource_meta(
-            ObjectMeta {
-                labels: Some(labels.clone()),
-                ..Default::default()
-            },
+            pod_object_meta,
             &node.spec.resource_meta,
         )),
         spec: Some(pod_spec),

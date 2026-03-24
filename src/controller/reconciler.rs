@@ -721,6 +721,13 @@ pub(crate) async fn apply_stellar_node(
                         seed_injection.as_ref(),
                     )
                     .await?;
+                    kms_secret::reconcile_vault_secret_rotation(
+                        client,
+                        node,
+                        seed_injection.as_ref(),
+                    )
+                    .await?;
+                    super::forensic_snapshot::reconcile_forensic_snapshot(client, node).await?;
                 }
                 NodeType::Horizon | NodeType::SorobanRpc => {
                     // Handle Canary Deployment

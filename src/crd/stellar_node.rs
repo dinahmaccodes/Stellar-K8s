@@ -11,11 +11,11 @@ use serde::{Deserialize, Serialize};
 
 use super::types::{
     AutoscalingConfig, Condition, CrossClusterConfig, DisasterRecoveryConfig,
-    DisasterRecoveryStatus, ExternalDatabaseConfig, GlobalDiscoveryConfig, HistoryMode,
-    HorizonConfig, IngressConfig, LoadBalancerConfig, ManagedDatabaseConfig, NetworkPolicyConfig,
-    NodeType, OciSnapshotConfig, ResourceRequirements, RestoreFromSnapshotConfig, RetentionPolicy,
-    RolloutStrategy, SnapshotScheduleConfig, SorobanConfig, StellarNetwork, StorageConfig,
-    ValidatorConfig, VpaConfig,
+    DisasterRecoveryStatus, ExternalDatabaseConfig, ForensicSnapshotConfig, GlobalDiscoveryConfig,
+    HistoryMode, HorizonConfig, IngressConfig, LoadBalancerConfig, ManagedDatabaseConfig,
+    NetworkPolicyConfig, NodeType, OciSnapshotConfig, ResourceRequirements,
+    RestoreFromSnapshotConfig, RetentionPolicy, RolloutStrategy, SnapshotScheduleConfig,
+    SorobanConfig, StellarNetwork, StorageConfig, ValidatorConfig, VpaConfig,
 };
 
 /// Structured validation error for `StellarNodeSpec`
@@ -176,6 +176,11 @@ pub struct StellarNodeSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_mesh: Option<super::service_mesh::ServiceMeshConfig>,
 
+    /// Forensic snapshot: set `metadata.annotations["stellar.org/request-forensic-snapshot"]="true"`
+    /// to trigger a one-shot capture (PCAP, optional core dump) uploaded to S3.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forensic_snapshot: Option<ForensicSnapshotConfig>,
+
     #[schemars(skip)]
     pub resource_meta: Option<ObjectMeta>,
 }
@@ -237,6 +242,7 @@ impl StellarNodeSpec {
     /// # db_maintenance_config: None,
     /// # oci_snapshot: None,
     /// # service_mesh: None,
+    /// # forensic_snapshot: None,
     /// # vpa_config: None,
     /// # resource_meta: None,
     /// # read_pool_endpoint: None,
@@ -917,6 +923,14 @@ pub struct StellarNodeStatus {
     /// Timestamp of last quorum analysis (RFC3339)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quorum_analysis_timestamp: Option<String>,
+
+    /// Last observed Vault secret version annotation (for rotation-driven rollouts).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vault_observed_secret_version: Option<String>,
+
+    /// Phase of the last forensic snapshot request (`Pending`, `Capturing`, `Complete`, `Failed`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forensic_snapshot_phase: Option<String>,
 }
 
 /// BGP advertisement status information
@@ -1133,6 +1147,7 @@ mod tests {
             db_maintenance_config: None,
             oci_snapshot: None,
             service_mesh: None,
+            forensic_snapshot: None,
             resource_meta: None,
             vpa_config: None,
             read_pool_endpoint: None,
@@ -1187,6 +1202,7 @@ mod tests {
             db_maintenance_config: None,
             oci_snapshot: None,
             service_mesh: None,
+            forensic_snapshot: None,
             resource_meta: None,
             vpa_config: None,
             read_pool_endpoint: None,

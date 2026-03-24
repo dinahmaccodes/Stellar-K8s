@@ -290,6 +290,7 @@ mod tests {
                 db_maintenance_config: None,
                 oci_snapshot: None,
                 service_mesh: None,
+                forensic_snapshot: None,
                 resource_meta: None,
                 read_pool_endpoint: None,
             },

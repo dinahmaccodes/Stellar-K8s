@@ -18,6 +18,7 @@ pub mod dr_drill;
 #[cfg(test)]
 mod dr_test;
 mod finalizers;
+mod forensic_snapshot;
 mod health;
 #[cfg(test)]
 mod health_test;
