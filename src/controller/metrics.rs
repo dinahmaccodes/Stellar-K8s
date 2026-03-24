@@ -192,6 +192,31 @@ pub static TRANSACTION_RESULT_TOTAL: Lazy<
 pub static HOST_FUNCTION_CALLS_TOTAL: Lazy<Family<SorobanLabels, Counter<u64, AtomicU64>>> =
     Lazy::new(Family::default);
 
+/// Labels for DR drill metrics
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct DRDrillLabels {
+    pub namespace: String,
+    pub name: String,
+    pub status: String, // "success", "failed", "rolled_back"
+}
+
+/// Histogram tracking DR drill execution time in milliseconds
+pub static DR_DRILL_EXECUTION_TIME_MS: Lazy<Family<DRDrillLabels, Histogram>> = Lazy::new(|| {
+    fn drill_histogram() -> Histogram {
+        // 100ms .. ~100s across 16 buckets
+        Histogram::new(exponential_buckets(100.0, 2.0, 16))
+    }
+    Family::new_with_constructor(drill_histogram)
+});
+
+/// Counter tracking DR drill executions
+pub static DR_DRILL_EXECUTIONS_TOTAL: Lazy<Family<DRDrillLabels, Counter<u64, AtomicU64>>> =
+    Lazy::new(Family::default);
+
+/// Gauge tracking Time to Recovery (TTR) in milliseconds
+pub static DR_DRILL_TIME_TO_RECOVERY_MS: Lazy<Family<DRDrillLabels, Gauge<i64, AtomicI64>>> =
+    Lazy::new(Family::default);
+
 /// Global metrics registry
 pub static REGISTRY: Lazy<Registry> = Lazy::new(|| {
     let mut registry = Registry::default();
@@ -308,6 +333,23 @@ pub static REGISTRY: Lazy<Registry> = Lazy::new(|| {
         "soroban_rpc_host_function_calls_total",
         "Total number of host function calls",
         HOST_FUNCTION_CALLS_TOTAL.clone(),
+    );
+
+    // Register DR drill metrics
+    registry.register(
+        "stellar_dr_drill_execution_time_ms",
+        "DR drill execution time in milliseconds",
+        DR_DRILL_EXECUTION_TIME_MS.clone(),
+    );
+    registry.register(
+        "stellar_dr_drill_executions_total",
+        "Total number of DR drill executions",
+        DR_DRILL_EXECUTIONS_TOTAL.clone(),
+    );
+    registry.register(
+        "stellar_dr_drill_time_to_recovery_ms",
+        "Time to Recovery (TTR) for DR drills in milliseconds",
+        DR_DRILL_TIME_TO_RECOVERY_MS.clone(),
     );
 
     registry
@@ -675,6 +717,39 @@ pub fn set_quorum_fragility_score(
         network: network.to_string(),
     };
     QUORUM_FRAGILITY_SCORE.get_or_create(&labels).set(score);
+}
+
+/// Record a DR drill execution
+pub fn observe_dr_drill_execution(
+    namespace: &str,
+    name: &str,
+    status: &str,
+    execution_time_ms: f64,
+) {
+    let labels = DRDrillLabels {
+        namespace: namespace.to_string(),
+        name: name.to_string(),
+        status: status.to_string(),
+    };
+    DR_DRILL_EXECUTION_TIME_MS
+        .get_or_create(&labels)
+        .observe(execution_time_ms);
+    DR_DRILL_EXECUTIONS_TOTAL.get_or_create(&labels).inc();
+}
+
+/// Set the Time to Recovery (TTR) for a DR drill
+pub fn set_dr_drill_time_to_recovery(
+    namespace: &str,
+    name: &str,
+    status: &str,
+    ttr_ms: i64,
+) {
+    let labels = DRDrillLabels {
+        namespace: namespace.to_string(),
+        name: name.to_string(),
+        status: status.to_string(),
+    };
+    DR_DRILL_TIME_TO_RECOVERY_MS.get_or_create(&labels).set(ttr_ms);
 }
 
 #[cfg(test)]
