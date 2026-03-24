@@ -13,9 +13,9 @@ use super::types::{
     AutoscalingConfig, Condition, CrossClusterConfig, DisasterRecoveryConfig,
     DisasterRecoveryStatus, ExternalDatabaseConfig, ForensicSnapshotConfig, GlobalDiscoveryConfig,
     HistoryMode, HorizonConfig, IngressConfig, LoadBalancerConfig, ManagedDatabaseConfig,
-    NetworkPolicyConfig, NodeType, OciSnapshotConfig, ResourceRequirements,
-    RestoreFromSnapshotConfig, RetentionPolicy, RolloutStrategy, SnapshotScheduleConfig,
-    SorobanConfig, StellarNetwork, StorageConfig, ValidatorConfig, VpaConfig,
+    NetworkPolicyConfig, NodeType, OciSnapshotConfig, PodAntiAffinityStrength,
+    ResourceRequirements, RestoreFromSnapshotConfig, RetentionPolicy, RolloutStrategy,
+    SnapshotScheduleConfig, SorobanConfig, StellarNetwork, StorageConfig, ValidatorConfig, VpaConfig,
 };
 
 /// Structured validation error for `StellarNodeSpec`
@@ -139,6 +139,11 @@ pub struct StellarNodeSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dr_config: Option<DisasterRecoveryConfig>,
 
+    /// When not `Disabled`, the operator adds default pod anti-affinity so pods with the same
+    /// `stellar-network` label (and same component) are not co-located on one node.
+    #[serde(default)]
+    pub pod_anti_affinity: PodAntiAffinityStrength,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<Vec<serde_json::Value>>")]
     pub topology_spread_constraints:
@@ -236,6 +241,7 @@ impl StellarNodeSpec {
     /// # maintenance_mode: false,
     /// # network_policy: None,
     /// # dr_config: None,
+    /// # pod_anti_affinity: Default::default(),
     /// # topology_spread_constraints: None,
     /// # cve_handling: None,
     /// # read_replica_config: None,
@@ -1138,6 +1144,7 @@ mod tests {
             maintenance_mode: false,
             network_policy: None,
             dr_config: None,
+            pod_anti_affinity: Default::default(),
             topology_spread_constraints: None,
             cross_cluster: None,
             cve_handling: None,
@@ -1193,6 +1200,7 @@ mod tests {
             maintenance_mode: false,
             network_policy: None,
             dr_config: None,
+            pod_anti_affinity: Default::default(),
             topology_spread_constraints: None,
             cross_cluster: None,
             cve_handling: None,
