@@ -1,5 +1,4 @@
-.PHONY: help build test fmt fmt-check lint clean docker-build install-crd apply-samples dev-setup ci-local benchmark benchmark-webhook benchmark-webhook-health benchmark-webhook-compare benchmark-webhook-save benchmark-all run-dev helm-lint crd-gen run-local
-.PHONY: help build test fmt lint clean docker-build install-crd apply-samples dev-setup ci-local benchmark benchmark-webhook benchmark-webhook-health benchmark-webhook-compare benchmark-webhook-save benchmark-all run-dev compose-up compose-dev compose-down compose-logs
+.PHONY: help build test fmt fmt-check lint clean docker-build install-crd apply-samples dev-setup ci-local benchmark benchmark-webhook benchmark-webhook-health benchmark-webhook-compare benchmark-webhook-save benchmark-all run-dev helm-lint crd-gen run-local compose-up compose-dev compose-down compose-logs quickstart
 
 # Default target
 .DEFAULT_GOAL := help
@@ -131,6 +130,35 @@ bundle: ## Generate bundle manifests and metadata, then validate generated files
 
 bundle-build: ## Build the bundle image.
 	docker build -f bundle.Dockerfile -t $(BUNDLE_IMG) .
+
+quickstart: ## End-to-end local quickstart: kind cluster + CRD + operator + sample StellarNode
+	@echo "→ Checking prerequisites..."
+	@command -v kind >/dev/null 2>&1 || (echo "✗ kind not found. Install: https://kind.sigs.k8s.io/docs/user/quick-start/#installation" && exit 1)
+	@command -v kubectl >/dev/null 2>&1 || (echo "✗ kubectl not found. Install: https://kubernetes.io/docs/tasks/tools/" && exit 1)
+	@command -v helm >/dev/null 2>&1 || (echo "✗ helm not found. Install: https://helm.sh/docs/intro/install/" && exit 1)
+	@echo "→ Creating kind cluster 'stellar-dev'..."
+	@kind create cluster --name stellar-dev --wait 120s || echo "  (cluster may already exist, continuing)"
+	@echo "→ Building operator image..."
+	@$(DOCKER) build -t stellar-operator:dev .
+	@echo "→ Loading image into kind cluster..."
+	@kind load docker-image stellar-operator:dev --name stellar-dev
+	@echo "→ Installing CRD..."
+	@$(KUBECTL) apply -f config/crd/stellarnode-crd.yaml
+	@echo "→ Creating namespace stellar-system..."
+	@$(KUBECTL) create namespace stellar-system --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	@echo "→ Deploying operator via Helm..."
+	@helm upgrade --install stellar-operator charts/stellar-operator \
+		--namespace stellar-system \
+		--set image.tag=dev \
+		--set image.pullPolicy=Never \
+		--wait --timeout 120s
+	@echo "→ Applying sample StellarNode..."
+	@$(KUBECTL) apply -f config/samples/test-stellarnode.yaml
+	@echo ""
+	@echo "✓ Quickstart complete!"
+	@echo "  Watch nodes:    kubectl get stellarnode -n stellar-system -w"
+	@echo "  View resources: kubectl get deploy,sts,svc,pvc -n stellar-system"
+	@echo "  Cleanup:        kind delete cluster --name stellar-dev"
 
 all: ci-local docker-build ## Full build pipeline
 
