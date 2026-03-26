@@ -116,10 +116,8 @@ pub fn new_shared() -> SharedFeatureFlags {
 pub async fn watch_feature_flags(client: Client, namespace: String, flags: SharedFeatureFlags) {
     let api: Api<ConfigMap> = Api::namespaced(client, &namespace);
 
-    let watcher_config = watcher::Config::default().fields(&format!(
-        "metadata.name={}",
-        FEATURE_FLAGS_CONFIGMAP
-    ));
+    let watcher_config = watcher::Config::default()
+        .fields(&format!("metadata.name={FEATURE_FLAGS_CONFIGMAP}"));
 
     let mut stream = watcher::watcher(api, watcher_config).boxed();
 
