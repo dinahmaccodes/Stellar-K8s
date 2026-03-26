@@ -2397,8 +2397,6 @@ pub(crate) fn build_statefulset_for_test(
 }
 
 #[cfg(test)]
-pub(crate) fn build_service_for_test(
-    node: &StellarNode,
-) -> k8s_openapi::api::core::v1::Service {
+pub(crate) fn build_service_for_test(node: &StellarNode) -> k8s_openapi::api::core::v1::Service {
     build_service(node, false)
 }

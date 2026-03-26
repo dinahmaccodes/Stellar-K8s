@@ -306,12 +306,12 @@ mod tests {
     // Issue #298 — standard labels and ownerReferences on all resource builders
     // -----------------------------------------------------------------------
 
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
     use crate::controller::resources::{
-        build_pvc_for_test, build_config_map_for_test, build_deployment_for_test,
-        build_statefulset_for_test, build_service_for_test, owner_reference, standard_labels,
+        build_config_map_for_test, build_deployment_for_test, build_pvc_for_test,
+        build_service_for_test, build_statefulset_for_test, owner_reference, standard_labels,
     };
     use crate::crd::StellarNode;
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 
     fn make_node(node_type: NodeType) -> StellarNode {
         use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;

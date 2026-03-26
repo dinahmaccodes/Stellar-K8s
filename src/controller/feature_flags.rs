@@ -116,8 +116,8 @@ pub fn new_shared() -> SharedFeatureFlags {
 pub async fn watch_feature_flags(client: Client, namespace: String, flags: SharedFeatureFlags) {
     let api: Api<ConfigMap> = Api::namespaced(client, &namespace);
 
-    let watcher_config = watcher::Config::default()
-        .fields(&format!("metadata.name={FEATURE_FLAGS_CONFIGMAP}"));
+    let watcher_config =
+        watcher::Config::default().fields(&format!("metadata.name={FEATURE_FLAGS_CONFIGMAP}"));
 
     let mut stream = watcher::watcher(api, watcher_config).boxed();
 
@@ -245,10 +245,7 @@ mod tests {
 
     #[test]
     fn test_parse_numeric_and_yes() {
-        let d = data(&[
-            ("enable_read_pool", "1"),
-            ("enable_dr", "yes"),
-        ]);
+        let d = data(&[("enable_read_pool", "1"), ("enable_dr", "yes")]);
         let flags = FeatureFlags::from_config_map_data(&d);
         assert!(flags.enable_read_pool);
         assert!(flags.enable_dr);

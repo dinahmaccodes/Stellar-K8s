@@ -53,15 +53,15 @@ mod traffic_test;
 pub mod vpa;
 mod vsl;
 
-pub use feature_flags::{
-    watch_feature_flags, FeatureFlags, SharedFeatureFlags, FEATURE_FLAGS_CONFIGMAP,
-};
 pub use archive_health::{
     calculate_backoff, check_archive_integrity, check_history_archive_health, ArchiveHealthResult,
     ArchiveIntegrityResult, ARCHIVE_LAG_THRESHOLD,
 };
 pub use cross_cluster::{check_peer_latency, ensure_cross_cluster_services, PeerLatencyStatus};
 pub use cve_reconciler::reconcile_cve_patches;
+pub use feature_flags::{
+    watch_feature_flags, FeatureFlags, SharedFeatureFlags, FEATURE_FLAGS_CONFIGMAP,
+};
 pub use finalizers::STELLAR_NODE_FINALIZER;
 pub use health::{check_node_health, HealthCheckResult};
 pub use operator_config::{hardcoded_defaults, OperatorConfig};

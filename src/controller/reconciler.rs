@@ -254,7 +254,6 @@ async fn publish_object_event(
         .map_err(Error::KubeError)
 }
 
-async fn publish_stellar_event(
 /// Helper to emit a Kubernetes Event
 #[instrument(skip(client, node, event_type, reason, message), fields(name = %node.name_any(), namespace = node.namespace()))]
 async fn emit_event(
