@@ -221,6 +221,43 @@
         "horizon": { "$ref": "#/definitions/resourceRequirements" },
         "sorobanRpc": { "$ref": "#/definitions/resourceRequirements" }
       }
+    },
+    "featureFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Runtime feature flags written into the stellar-operator-config ConfigMap",
+      "properties": {
+        "enableCveScanning": {
+          "type": "string",
+          "enum": ["true", "false"],
+          "description": "Enable automatic CVE patch reconciliation"
+        },
+        "enableReadPool": {
+          "type": "string",
+          "enum": ["true", "false"],
+          "description": "Enable read-replica pool management"
+        },
+        "enableDr": {
+          "type": "string",
+          "enum": ["true", "false"],
+          "description": "Enable disaster-recovery drill scheduling"
+        },
+        "enablePeerDiscovery": {
+          "type": "string",
+          "enum": ["true", "false"],
+          "description": "Enable automatic peer discovery"
+        },
+        "enableArchiveHealth": {
+          "type": "string",
+          "enum": ["true", "false"],
+          "description": "Enable history archive health checks"
+        },
+        "enableSorobanMetrics": {
+          "type": "string",
+          "enum": ["true", "false"],
+          "description": "Enable Soroban-specific Prometheus metrics collection"
+        }
+      }
     }
   },
   "definitions": {
