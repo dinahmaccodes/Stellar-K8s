@@ -255,7 +255,7 @@ async fn publish_object_event(
 }
 
 /// Helper to emit a Kubernetes Event
-#[instrument(skip(client, node, event_type, reason, message), fields(name = %node.name_any(), namespace = node.namespace()))]
+#[instrument(skip(client, reporter, node, reason, note), fields(name = %node.name_any(), namespace = node.namespace()))]
 async fn emit_event(
     client: &Client,
     reporter: &Reporter,
@@ -267,6 +267,20 @@ async fn emit_event(
 ) -> Result<()> {
     let recorder = recorder_for(client, reporter, node);
     publish_object_event(&recorder, type_, reason, action, note).await
+}
+
+/// Convenience wrapper — identical to [`emit_event`]; used by callers that
+/// prefer the `publish_stellar_event` name for clarity.
+async fn publish_stellar_event(
+    client: &Client,
+    reporter: &Reporter,
+    node: &StellarNode,
+    type_: EventType,
+    reason: &str,
+    action: &str,
+    note: &str,
+) -> Result<()> {
+    emit_event(client, reporter, node, type_, reason, action, note).await
 }
 
 /// Returns whether the primary workload (Deployment or StatefulSet) for this node already exists.
@@ -378,7 +392,6 @@ where
             "Dry Run: {} {}/{} - {}",
             action, namespace, name, resource_info
         );
-        emit_event(&ctx.client, node, "Normal", reason, &message).await?;
         Ok(())
     } else {
         fut.await
