@@ -1,4 +1,4 @@
-.PHONY: help build test fmt lint clean docker-build install-crd apply-samples dev-setup ci-local benchmark benchmark-webhook benchmark-webhook-health benchmark-webhook-compare benchmark-webhook-save benchmark-all run-dev
+.PHONY: help build test fmt fmt-check lint clean docker-build install-crd apply-samples dev-setup ci-local benchmark benchmark-webhook benchmark-webhook-health benchmark-webhook-compare benchmark-webhook-save benchmark-all run-dev helm-lint crd-gen run-local
 
 # Default target
 .DEFAULT_GOAL := help
@@ -71,6 +71,14 @@ install-crd: ## Install CRDs
 apply-samples: install-crd ## Apply samples
 	$(KUBECTL) apply -f config/samples/
 
+crd-gen: ## Generate CRDs
+	@echo "→ Generating CRDs..."
+	@$(CARGO) run --bin crdgen > config/crd/stellarnode-crd.yaml
+
+helm-lint: ## Helm lint check
+	@echo "→ Linting Helm charts..."
+	helm lint charts/stellar-operator
+
 dev-setup: ## Setup dev environment
 	rustup update stable
 	rustup default stable
@@ -101,7 +109,7 @@ benchmark-webhook-save: ## Save current results as baseline
 
 benchmark-all: benchmark benchmark-webhook ## Run all benchmarks
 
-run: build ## Run locally
+run-local: build ## Run locally
 	RUST_LOG=info ./target/release/stellar-operator
 
 run-dev: ## Run operator in dev mode with hot reload

@@ -375,15 +375,19 @@ For more details on Soroban metrics, see the [Stellar Soroban RPC documentation]
 # Setup development environment
 make dev-setup
 
-# Quick pre-commit check
-make quick
+# Standard Development Targets
+make build         # Build release binary
+make test          # Run all tests
+make lint          # Run clippy
+make fmt           # Format code
+make docker-build  # Build Docker image
+make helm-lint     # Run Helm chart linting
+make crd-gen       # Generate CRDs
+make run-local     # Run operator locally in dev mode
+make clean         # Clean build artifacts
 
 # Full CI validation
 make ci-local
-
-# Build and run
-make build
-make run
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines.
