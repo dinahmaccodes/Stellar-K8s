@@ -2,6 +2,7 @@
 //! This module contains the main controller loop, reconciliation logic,
 //! and resource management for Stellar nodes.
 
+pub mod feature_flags;
 pub mod maintenance;
 pub mod resource_meta;
 
@@ -52,6 +53,9 @@ mod traffic_test;
 pub mod vpa;
 mod vsl;
 
+pub use feature_flags::{
+    watch_feature_flags, FeatureFlags, SharedFeatureFlags, FEATURE_FLAGS_CONFIGMAP,
+};
 pub use archive_health::{
     calculate_backoff, check_archive_integrity, check_history_archive_health, ArchiveHealthResult,
     ArchiveIntegrityResult, ARCHIVE_LAG_THRESHOLD,

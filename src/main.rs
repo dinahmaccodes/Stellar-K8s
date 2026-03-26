@@ -602,6 +602,12 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
         env!("CARGO_PKG_VERSION")
     );
 
+    // Initialise operator build-info metric (Issue #301)
+    #[cfg(feature = "metrics")]
+    {
+        stellar_k8s::controller::metrics::init_operator_info();
+    }
+
     // Initialize Kubernetes client
     let client = kube::Client::try_default()
         .await
@@ -709,6 +715,21 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
         });
     }
 
+    // Update leader-status and uptime metrics every 10 s (Issue #301)
+    #[cfg(feature = "metrics")]
+    {
+        let is_leader_metrics = Arc::clone(&is_leader);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                let leader = is_leader_metrics.load(std::sync::atomic::Ordering::Relaxed);
+                stellar_k8s::controller::metrics::set_leader_status(leader);
+                stellar_k8s::controller::metrics::inc_uptime_seconds(10);
+            }
+        });
+    }
+
     // Create shared controller state
     let operator_config = stellar_k8s::controller::OperatorConfig::load();
     let state = Arc::new(controller::ControllerState {
@@ -736,6 +757,17 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
             tracing::error!("Peer discovery manager error: {:?}", e);
         }
     });
+
+    // Start the feature-flag watcher (watches stellar-operator-config ConfigMap)
+    let feature_flags = controller::feature_flags::new_shared();
+    {
+        let ff_client = client.clone();
+        let ff_namespace = args.namespace.clone();
+        let ff_flags = feature_flags.clone();
+        tokio::spawn(async move {
+            controller::watch_feature_flags(ff_client, ff_namespace, ff_flags).await;
+        });
+    }
 
     // Start the REST API server and optional mTLS certificate rotation
     #[cfg(feature = "rest-api")]

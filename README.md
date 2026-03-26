@@ -177,6 +177,16 @@ See [wasm-webhook.md](docs/wasm-webhook.md) for complete documentation and examp
 
 Stellar-K8s comes with built-in Prometheus metrics and a pre-configured Grafana dashboard that provides a comprehensive overview of both the operator's health and the managed Stellar nodes.
 
+### Operator Build Info & Leader Metrics
+
+The operator exposes the following production-readiness metrics:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `stellar_operator_info` | Gauge | Always `1`; carries `version`, `git_sha`, `rust_version` labels |
+| `stellar_operator_leader_status` | Gauge | `1` if this instance is the current leader, `0` otherwise |
+| `stellar_operator_uptime_seconds_total` | Counter | Total uptime of the operator process in seconds |
+
 ### Importing the Grafana Dashboard
 
 1. Open your Grafana instance.
@@ -187,6 +197,45 @@ Stellar-K8s comes with built-in Prometheus metrics and a pre-configured Grafana 
    - Node availability, sync status, and peer connectivity
    - Controller reconciliation rates and duration (p50, p95, p99)
    - Error rates and operator resource usage (CPU/Memory)
+   - Operator version, leader status, and uptime (new panels)
+
+---
+
+## ⚙️ Runtime Feature Flags
+
+The operator supports runtime feature flags via the `stellar-operator-config` ConfigMap. Changes are picked up **without restart**.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stellar-operator-config
+  namespace: stellar-system
+data:
+  enable_cve_scanning: "true"
+  enable_read_pool: "false"
+  enable_dr: "false"
+  enable_peer_discovery: "true"
+  enable_archive_health: "true"
+  enable_soroban_metrics: "true"
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `enable_cve_scanning` | `true` | Automatic CVE patch reconciliation |
+| `enable_read_pool` | `false` | Read-replica pool management |
+| `enable_dr` | `false` | Disaster-recovery drill scheduling |
+| `enable_peer_discovery` | `true` | Automatic peer discovery |
+| `enable_archive_health` | `true` | History archive health checks |
+| `enable_soroban_metrics` | `true` | Soroban-specific Prometheus metrics |
+
+When using the Helm chart, set flags via `values.yaml`:
+
+```yaml
+featureFlags:
+  enableCveScanning: "true"
+  enableReadPool: "false"
+```
 
 ---
 
