@@ -301,4 +301,178 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Issue #298 — standard labels and ownerReferences on all resource builders
+    // -----------------------------------------------------------------------
+
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+    use crate::controller::resources::{
+        build_pvc_for_test, build_config_map_for_test, build_deployment_for_test,
+        build_statefulset_for_test, build_service_for_test, owner_reference, standard_labels,
+    };
+    use crate::crd::StellarNode;
+
+    fn make_node(node_type: NodeType) -> StellarNode {
+        use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+        StellarNode {
+            metadata: ObjectMeta {
+                name: Some("test-node".to_string()),
+                namespace: Some("stellar-system".to_string()),
+                uid: Some("abc-123".to_string()),
+                ..Default::default()
+            },
+            spec: minimal_spec(node_type),
+            status: None,
+        }
+    }
+
+    fn assert_standard_labels(meta: &ObjectMeta, node: &StellarNode) {
+        let labels = meta.labels.as_ref().expect("labels must be set");
+        assert_eq!(
+            labels.get("app.kubernetes.io/name").map(|s| s.as_str()),
+            Some("stellar-node"),
+            "app.kubernetes.io/name must be 'stellar-node'"
+        );
+        assert_eq!(
+            labels.get("app.kubernetes.io/instance").map(|s| s.as_str()),
+            Some(node.metadata.name.as_deref().unwrap_or("")),
+            "app.kubernetes.io/instance must match node name"
+        );
+        assert_eq!(
+            labels
+                .get("app.kubernetes.io/managed-by")
+                .map(|s| s.as_str()),
+            Some("stellar-operator"),
+            "app.kubernetes.io/managed-by must be 'stellar-operator'"
+        );
+        assert!(
+            labels.contains_key("app.kubernetes.io/component"),
+            "app.kubernetes.io/component must be set"
+        );
+    }
+
+    fn assert_owner_reference(meta: &ObjectMeta, node: &StellarNode) {
+        let refs = meta
+            .owner_references
+            .as_ref()
+            .expect("ownerReferences must be set");
+        assert_eq!(refs.len(), 1, "exactly one ownerReference expected");
+        let oref = &refs[0];
+        assert_eq!(
+            oref.name,
+            node.metadata.name.as_deref().unwrap_or(""),
+            "ownerReference.name must match node name"
+        );
+        assert_eq!(
+            oref.uid,
+            node.metadata.uid.as_deref().unwrap_or(""),
+            "ownerReference.uid must match node uid"
+        );
+        assert_eq!(
+            oref.controller,
+            Some(true),
+            "ownerReference.controller must be true"
+        );
+        assert_eq!(
+            oref.block_owner_deletion,
+            Some(true),
+            "ownerReference.blockOwnerDeletion must be true"
+        );
+    }
+
+    #[test]
+    fn test_pvc_has_standard_labels_and_owner_ref() {
+        let node = make_node(NodeType::Validator);
+        let pvc = build_pvc_for_test(&node, "standard".to_string());
+        assert_standard_labels(&pvc.metadata, &node);
+        assert_owner_reference(&pvc.metadata, &node);
+    }
+
+    #[test]
+    fn test_config_map_has_standard_labels_and_owner_ref() {
+        let node = make_node(NodeType::Validator);
+        let cm = build_config_map_for_test(&node);
+        assert_standard_labels(&cm.metadata, &node);
+        assert_owner_reference(&cm.metadata, &node);
+    }
+
+    #[test]
+    fn test_deployment_has_standard_labels_and_owner_ref() {
+        let node = make_node(NodeType::Horizon);
+        let deploy = build_deployment_for_test(&node);
+        assert_standard_labels(&deploy.metadata, &node);
+        assert_owner_reference(&deploy.metadata, &node);
+    }
+
+    #[test]
+    fn test_statefulset_has_standard_labels_and_owner_ref() {
+        let node = make_node(NodeType::Validator);
+        let sts = build_statefulset_for_test(&node);
+        assert_standard_labels(&sts.metadata, &node);
+        assert_owner_reference(&sts.metadata, &node);
+    }
+
+    #[test]
+    fn test_service_has_standard_labels_and_owner_ref() {
+        let node = make_node(NodeType::Horizon);
+        let svc = build_service_for_test(&node);
+        assert_standard_labels(&svc.metadata, &node);
+        assert_owner_reference(&svc.metadata, &node);
+    }
+
+    #[test]
+    fn test_standard_labels_all_four_keys_present() {
+        let node = make_node(NodeType::SorobanRpc);
+        let labels = standard_labels(&node);
+        for key in &[
+            "app.kubernetes.io/name",
+            "app.kubernetes.io/instance",
+            "app.kubernetes.io/managed-by",
+            "app.kubernetes.io/component",
+        ] {
+            assert!(
+                labels.contains_key(*key),
+                "standard_labels must contain '{key}'"
+            );
+        }
+    }
+
+    #[test]
+    fn test_owner_reference_fields() {
+        let node = make_node(NodeType::Validator);
+        let oref = owner_reference(&node);
+        assert_eq!(oref.name, "test-node");
+        assert_eq!(oref.uid, "abc-123");
+        assert_eq!(oref.controller, Some(true));
+        assert_eq!(oref.block_owner_deletion, Some(true));
+        assert!(!oref.api_version.is_empty());
+        assert!(!oref.kind.is_empty());
+    }
+
+    #[test]
+    fn test_validator_component_label() {
+        let node = make_node(NodeType::Validator);
+        let labels = standard_labels(&node);
+        let component = labels
+            .get("app.kubernetes.io/component")
+            .expect("component label must be set");
+        assert!(
+            component.to_lowercase().contains("validator"),
+            "component label should reflect validator type, got: {component}"
+        );
+    }
+
+    #[test]
+    fn test_horizon_component_label() {
+        let node = make_node(NodeType::Horizon);
+        let labels = standard_labels(&node);
+        let component = labels
+            .get("app.kubernetes.io/component")
+            .expect("component label must be set");
+        assert!(
+            component.to_lowercase().contains("horizon"),
+            "component label should reflect horizon type, got: {component}"
+        );
+    }
 }

@@ -2363,3 +2363,42 @@ pub async fn delete_pdb(client: &Client, node: &StellarNode, dry_run: bool) -> R
 
     Ok(())
 }
+
+// ============================================================================
+// Test helpers — thin wrappers that expose private builders for unit tests
+// (Issue #298)
+// ============================================================================
+
+#[cfg(test)]
+pub(crate) fn build_pvc_for_test(
+    node: &StellarNode,
+    storage_class: String,
+) -> k8s_openapi::api::core::v1::PersistentVolumeClaim {
+    build_pvc(node, storage_class)
+}
+
+#[cfg(test)]
+pub(crate) fn build_config_map_for_test(node: &StellarNode) -> ConfigMap {
+    build_config_map(node, None, false)
+}
+
+#[cfg(test)]
+pub(crate) fn build_deployment_for_test(
+    node: &StellarNode,
+) -> k8s_openapi::api::apps::v1::Deployment {
+    build_deployment(node, false)
+}
+
+#[cfg(test)]
+pub(crate) fn build_statefulset_for_test(
+    node: &StellarNode,
+) -> k8s_openapi::api::apps::v1::StatefulSet {
+    build_statefulset(node, false, None)
+}
+
+#[cfg(test)]
+pub(crate) fn build_service_for_test(
+    node: &StellarNode,
+) -> k8s_openapi::api::core::v1::Service {
+    build_service(node, false)
+}
