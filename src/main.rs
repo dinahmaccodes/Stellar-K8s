@@ -9,7 +9,7 @@ use k8s_openapi::apimachinery::pkg::apis::meta::v1::MicroTime;
 use kube::api::{Api, ObjectMeta, Patch, PatchParams, PostParams};
 use kube::ResourceExt;
 use stellar_k8s::{controller, crd::StellarNode, preflight, Error};
-use tracing::{debug, info, info_span, warn, Level, Instrument};
+use tracing::{debug, info, info_span, warn, Instrument, Level};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[derive(Parser, Debug)]
