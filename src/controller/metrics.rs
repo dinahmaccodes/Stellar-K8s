@@ -2,6 +2,7 @@
 //!
 //! # Exported metrics
 //! The `/metrics` endpoint (when built with `--features metrics`) exports the following metrics:
+//! - `reconcile_duration_seconds` (histogram): reconcile duration labeled by controller.
 //! - `stellar_reconcile_duration_seconds` (histogram): reconcile duration labeled by controller.
 //! - `stellar_reconcile_errors_total` (counter): reconcile errors labeled by controller and kind.
 //! - `stellar_node_ledger_sequence` (gauge): ledger sequence labeled by namespace/name/node_type/network.
@@ -141,6 +142,17 @@ pub static RECONCILE_DURATION_SECONDS: Lazy<Family<ReconcileLabels, Histogram>> 
     Family::new_with_constructor(reconcile_histogram)
 });
 
+/// Histogram tracking reconcile duration (seconds) under the non-prefixed metric name.
+pub static RAW_RECONCILE_DURATION_SECONDS: Lazy<Family<ReconcileLabels, Histogram>> =
+    Lazy::new(|| {
+        fn reconcile_histogram() -> Histogram {
+            // 1ms .. ~32s across 16 buckets.
+            Histogram::new(exponential_buckets(0.001, 2.0, 16))
+        }
+
+        Family::new_with_constructor(reconcile_histogram)
+    });
+
 /// Counter tracking reconcile errors
 pub static RECONCILE_ERRORS_TOTAL: Lazy<Family<ErrorLabels, Counter<u64, AtomicU64>>> =
     Lazy::new(Family::default);
@@ -220,6 +232,12 @@ pub static DR_DRILL_TIME_TO_RECOVERY_MS: Lazy<Family<DRDrillLabels, Gauge<i64, A
 /// Global metrics registry
 pub static REGISTRY: Lazy<Registry> = Lazy::new(|| {
     let mut registry = Registry::default();
+
+    registry.register(
+        "reconcile_duration_seconds",
+        "Duration of reconcile loops in seconds",
+        RAW_RECONCILE_DURATION_SECONDS.clone(),
+    );
 
     registry.register(
         "stellar_reconcile_duration_seconds",
@@ -377,6 +395,9 @@ pub fn observe_reconcile_duration_seconds(controller: &str, seconds: f64) {
     let labels = ReconcileLabels {
         controller: controller.to_string(),
     };
+    RAW_RECONCILE_DURATION_SECONDS
+        .get_or_create(&labels)
+        .observe(seconds);
     RECONCILE_DURATION_SECONDS
         .get_or_create(&labels)
         .observe(seconds);
