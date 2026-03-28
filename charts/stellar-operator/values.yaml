@@ -94,6 +94,21 @@ operator:
   # Namespace to watch (empty = all namespaces)
   watchNamespace: ""
 
+# Diagnostic sidecar configuration
+sidecar:
+  enabled: true
+  image:
+    repository: ghcr.io/stellar/stellar-k8s
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 50m
+      memory: 32Mi
+
 # Service for REST API and metrics
 service:
   type: ClusterIP

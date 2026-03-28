@@ -148,6 +148,10 @@ name = "stellar-operator"
 path = "src/main.rs"
 
 [[bin]]
+name = "stellar-sidecar"
+path = "src/sidecar.rs"
+
+[[bin]]
 name = "kubectl-stellar"
 path = "src/kubectl_plugin.rs"
 
