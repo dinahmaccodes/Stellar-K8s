@@ -1492,6 +1492,16 @@ pub(crate) async fn apply_stellar_node(
             &hardware_generation,
             phase,
         );
+        
+        // 10c. Update node up status based on pod readiness
+        metrics::set_node_up(
+            &namespace,
+            &name,
+            &node.spec.node_type.to_string(),
+            node.spec.network.passphrase(),
+            &hardware_generation,
+            health_result.healthy,
+        );
     }
 
     // 11. OCI snapshot push/pull Jobs
