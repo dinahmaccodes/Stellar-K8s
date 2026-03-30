@@ -29,6 +29,10 @@ pub async fn get_search_index() -> axum::response::Response {
         .body(axum::body::Body::from(SEARCH_INDEX_JSON))
         .unwrap()
 }
+
+/// Health check endpoint
+#[instrument]
+pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -214,6 +218,7 @@ pub async fn get_log_level(
         expires_at,
         message: "Current log level status".to_string(),
     })
+}
 
 /// /healthz - basic liveness signal; always 200 if the process is up.
 pub async fn healthz() -> Json<ProbeResponse> {
