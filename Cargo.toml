@@ -154,7 +154,7 @@ reconciler-fuzz = []
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
-wiremock = "0.6"
+wiremock = "=0.6.4"
 proptest = "1.5"
 wat = "1.245"
 

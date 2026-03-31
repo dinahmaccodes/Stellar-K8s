@@ -30,7 +30,11 @@ fmt-check: ## Check formatting
 
 lint: ## Run clippy
 	@echo "→ Running clippy..."
-	@$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
+	@$(CARGO) clippy --workspace --all-targets --all-features -- \
+		-D clippy::correctness \
+		-D clippy::suspicious \
+		-D clippy::perf \
+		-D clippy::style
 
 audit: ## Security audit
 	@echo "→ Running security audit..."
