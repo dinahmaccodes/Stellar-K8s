@@ -12,8 +12,7 @@ use kube::ResourceExt;
 use stellar_k8s::controller::archive_prune::{prune_archive, PruneArchiveArgs};
 use stellar_k8s::controller::diff::{diff, DiffArgs};
 use stellar_k8s::infra;
-use stellar_k8s::log_scrub::ScrubLayer;
-use stellar_k8s::{controller, crd::StellarNode, preflight, Error};
+use stellar_k8s::{controller, crd::StellarNode, incident, preflight, Error};
 use tracing::{debug, info, info_span, warn, Instrument, Level};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -67,6 +66,8 @@ enum Commands {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+    /// Generate an incident report for a specific time window
+    IncidentReport(incident::IncidentReportArgs),
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -358,14 +359,8 @@ async fn main() -> Result<(), Error> {
             generate(shell, &mut cmd, name, &mut std::io::stdout());
             return Ok(());
         }
-        Commands::PruneArchive(prune_args) => {
-            return prune_archive(prune_args).await;
-        }
-        Commands::Diff(diff_args) => {
-            return diff(diff_args).await;
-        }
-        Commands::GenerateRunbook(runbook_args) => {
-            return run_generate_runbook(runbook_args).await;
+        Commands::IncidentReport(args) => {
+            return incident::run_incident_report(args).await;
         }
     }
 }
