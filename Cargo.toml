@@ -148,11 +148,15 @@ admission-webhook = [
     "tower-http",
 ]
 axum = ["dep:axum"]
+# Expose reconciler for state-machine fuzzing (reconcile_no_panic, event sequences)
+reconciler-fuzz = []
 
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
 wiremock = "0.6"
+proptest = "1.5"
+wat = "1.0"
 wat = "1.245"
 proptest = "1.5"
 
