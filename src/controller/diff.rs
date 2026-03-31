@@ -841,12 +841,20 @@ fn generate_unified_diff(
     result
 }
 
+// Extension trait for colored output
 trait ColoredOutput {
     fn bold(&self) -> String;
 }
 
 impl ColoredOutput for &str {
     fn bold(&self) -> String {
+        format!("\x1b[1m{}\x1b[0m", self)
+    }
+}
+
+impl ColoredOutput for String {
+    fn bold(&self) -> String {
+        format!("\x1b[1m{}\x1b[0m", self)
         format!("\x1b[1m{self}\x1b[0m")
     }
 }
@@ -909,7 +917,7 @@ mod tests {
 
     #[test]
     fn test_diff_summary_calculation() {
-        let resources = vec![
+        let resources = [
             ResourceDiff {
                 kind: "ConfigMap".to_string(),
                 name: "cm1".to_string(),

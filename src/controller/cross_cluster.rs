@@ -511,10 +511,8 @@ mod tests {
                 },
             },
             storage: StorageConfig::default(),
-            validator_config: None,
-            horizon_config: None,
-            soroban_config: None,
             replicas: 1,
+            ..Default::default()
             min_available: None,
             max_unavailable: None,
             suspended: false,

@@ -11,7 +11,7 @@ mod tests {
 
     use crate::controller::resources::build_topology_spread_constraints;
     use crate::crd::{
-        types::{PodAntiAffinityStrength, ResourceRequirements, ResourceSpec, StorageConfig},
+        types::{PodAntiAffinityStrength, ResourceRequirements, ResourceSpec},
         NodeType, StellarNetwork, StellarNodeSpec,
     };
 
@@ -24,7 +24,6 @@ mod tests {
             node_type,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
-            history_mode: Default::default(),
             resources: ResourceRequirements {
                 requests: ResourceSpec {
                     cpu: "500m".to_string(),
@@ -35,11 +34,8 @@ mod tests {
                     memory: "4Gi".to_string(),
                 },
             },
-            storage: StorageConfig::default(),
-            validator_config: None,
-            horizon_config: None,
-            soroban_config: None,
             replicas: 3,
+            ..Default::default()
             min_available: None,
             max_unavailable: None,
             suspended: false,

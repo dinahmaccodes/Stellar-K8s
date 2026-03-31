@@ -1467,6 +1467,73 @@ fn build_pod_template(
         }
     }
 
+    // Add NAT traversal sidecar
+    if let Some(nat_cfg) = &node.spec.nat_traversal {
+        if nat_cfg.enabled {
+            let mut env = vec![EnvVar {
+                name: "ENABLE_ICE".to_string(),
+                value: Some(nat_cfg.enable_ice.to_string()),
+                ..Default::default()
+            }];
+
+            if let Some(stun) = &nat_cfg.stun_server {
+                env.push(EnvVar {
+                    name: "STUN_SERVER".to_string(),
+                    value: Some(stun.clone()),
+                    ..Default::default()
+                });
+            }
+
+            if let Some(turn) = &nat_cfg.turn_server {
+                env.push(EnvVar {
+                    name: "TURN_SERVER".to_string(),
+                    value: Some(turn.clone()),
+                    ..Default::default()
+                });
+            }
+
+            if let Some(secret_ref) = &nat_cfg.turn_credentials_secret_ref {
+                env.push(EnvVar {
+                    name: "TURN_USERNAME".to_string(),
+                    value: None,
+                    value_from: Some(EnvVarSource {
+                        secret_key_ref: Some(SecretKeySelector {
+                            name: Some(secret_ref.clone()),
+                            key: "username".to_string(),
+                            optional: Some(false),
+                        }),
+                        ..Default::default()
+                    }),
+                });
+                env.push(EnvVar {
+                    name: "TURN_PASSWORD".to_string(),
+                    value: None,
+                    value_from: Some(EnvVarSource {
+                        secret_key_ref: Some(SecretKeySelector {
+                            name: Some(secret_ref.clone()),
+                            key: "password".to_string(),
+                            optional: Some(false),
+                        }),
+                        ..Default::default()
+                    }),
+                });
+            }
+
+            let sidecar_image = nat_cfg
+                .sidecar_image
+                .clone()
+                .unwrap_or_else(|| "stellar/nat-traversal:latest".to_string());
+
+            let containers = &mut pod_spec.containers;
+            containers.push(Container {
+                name: "nat-traversal".to_string(),
+                image: Some(sidecar_image),
+                env: Some(env),
+                ..Default::default()
+            });
+        }
+    }
+
     // ==========================================================================
     // Merge user-defined sidecar containers into the pod spec
     // ==========================================================================
@@ -2729,7 +2796,7 @@ pub(crate) fn build_service_for_test(node: &StellarNode) -> k8s_openapi::api::co
 mod ensure_pvc_tests {
     use super::{build_pvc, pvc_needs_update, resolve_pvc_storage_class};
     use crate::crd::{
-        types::{ResourceRequirements, ResourceSpec, StorageConfig, StorageMode},
+        types::{ResourceRequirements, ResourceSpec, StorageMode},
         NodeType, StellarNetwork, StellarNode, StellarNodeSpec,
     };
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -2746,7 +2813,6 @@ mod ensure_pvc_tests {
                 node_type: NodeType::Validator,
                 network: StellarNetwork::Testnet,
                 version: "v21.0.0".to_string(),
-                history_mode: Default::default(),
                 resources: ResourceRequirements {
                     requests: ResourceSpec {
                         cpu: "500m".to_string(),
@@ -2757,11 +2823,8 @@ mod ensure_pvc_tests {
                         memory: "4Gi".to_string(),
                     },
                 },
-                storage: StorageConfig::default(),
-                validator_config: None,
-                horizon_config: None,
-                soroban_config: None,
                 replicas: 1,
+                ..Default::default()
                 min_available: None,
                 max_unavailable: None,
                 suspended: false,

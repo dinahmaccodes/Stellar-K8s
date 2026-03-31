@@ -301,30 +301,36 @@ async fn scan_local_checkpoints(location: &ArchiveLocation) -> Result<Vec<Checkp
 }
 
 /// Scan a hex directory for checkpoint files
-async fn scan_hex_directory(dir_path: &std::path::Path) -> Result<Vec<Checkpoint>, Error> {
+fn scan_hex_directory(
+    dir_path: &std::path::Path,
+) -> futures::future::BoxFuture<'_, Result<Vec<Checkpoint>, Error>> {
+    use futures::FutureExt;
     use tokio::fs;
 
-    let mut checkpoints = Vec::new();
-    let mut directories = vec![dir_path.to_path_buf()];
-
-    while let Some(current_dir) = directories.pop() {
-        let mut entries = fs::read_dir(&current_dir).await?;
+    let dir_path = dir_path.to_path_buf();
+    async move {
+        let mut checkpoints = Vec::new();
+        let mut entries = fs::read_dir(&dir_path).await?;
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if path.is_dir() {
-                directories.push(path);
+                // Recurse into nested hex directories
+                let sub_checkpoints = scan_hex_directory(&path).await?;
+                checkpoints.extend(sub_checkpoints);
             } else if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                 if filename.starts_with("history-") && filename.ends_with(".xdr.gz") {
+                    // Parse checkpoint from filename
                     if let Some(checkpoint) = parse_checkpoint_from_path(&path, filename).await? {
                         checkpoints.push(checkpoint);
                     }
                 }
             }
         }
-    }
 
-    Ok(checkpoints)
+        Ok(checkpoints)
+    }
+    .boxed()
 }
 
 /// Parse checkpoint information from file path
@@ -520,10 +526,7 @@ pub async fn execute_prune(
 
     delete_stream.collect::<Vec<()>>().await;
 
-    let final_errors = match Arc::try_unwrap(errors) {
-        Ok(mutex) => mutex.into_inner(),
-        Err(errors) => errors.lock().await.clone(),
-    };
+    let final_errors = errors.lock().await.clone();
 
     let deleted_count = deletable.len() - final_errors.len();
 
@@ -713,32 +716,27 @@ mod tests {
     #[test]
     fn test_identify_deletable_checkpoints_time_based() {
         let now = Utc::now();
-        let checkpoints = vec![
-            Checkpoint {
-                ledger_seq: 1000,
-                checkpoint_hash: "abc123".to_string(),
-                timestamp: now - Duration::days(1),
+        // Create 11 checkpoints, 10 for safety buffer, 1 for deletion
+        let mut checkpoints: Vec<Checkpoint> = (0..10)
+            .map(|i| Checkpoint {
+                ledger_seq: 1000 - i,
+                checkpoint_hash: format!("hash{}", i),
+                timestamp: now - Duration::days(i as i64),
                 size_bytes: 1000,
-                path: "/test/1".to_string(),
+                path: format!("/test/{}", i),
                 is_valid: true,
-            },
-            Checkpoint {
-                ledger_seq: 900,
-                checkpoint_hash: "def456".to_string(),
-                timestamp: now - Duration::days(10),
-                size_bytes: 1000,
-                path: "/test/2".to_string(),
-                is_valid: true,
-            },
-            Checkpoint {
-                ledger_seq: 800,
-                checkpoint_hash: "ghi789".to_string(),
-                timestamp: now - Duration::days(40),
-                size_bytes: 1000,
-                path: "/test/3".to_string(),
-                is_valid: true,
-            },
-        ];
+            })
+            .collect();
+
+        // Add one old checkpoint that should be deletable
+        checkpoints.push(Checkpoint {
+            ledger_seq: 800,
+            checkpoint_hash: "old-hash".to_string(),
+            timestamp: now - Duration::days(40),
+            size_bytes: 1000,
+            path: "/test/old".to_string(),
+            is_valid: true,
+        });
 
         let (deletable, retained) = identify_deletable_checkpoints(
             &checkpoints,
@@ -754,38 +752,33 @@ mod tests {
         assert_eq!(deletable[0].ledger_seq, 800);
 
         // Recent checkpoints should be retained
-        assert_eq!(retained.len(), 2);
+        assert_eq!(retained.len(), 10);
     }
 
     #[test]
     fn test_identify_deletable_checkpoints_ledger_based() {
         let now = Utc::now();
-        let checkpoints = vec![
-            Checkpoint {
-                ledger_seq: 1000000,
-                checkpoint_hash: "abc".to_string(),
+        // Create 11 checkpoints, 10 for safety buffer, 1 for deletion
+        let mut checkpoints: Vec<Checkpoint> = (0..10)
+            .map(|i| Checkpoint {
+                ledger_seq: 1000000 - (i * 1000),
+                checkpoint_hash: format!("hash{}", i),
                 timestamp: now,
                 size_bytes: 1000,
-                path: "/test/1".to_string(),
+                path: format!("/test/{}", i),
                 is_valid: true,
-            },
-            Checkpoint {
-                ledger_seq: 900000,
-                checkpoint_hash: "def".to_string(),
-                timestamp: now - Duration::days(5),
-                size_bytes: 1000,
-                path: "/test/2".to_string(),
-                is_valid: true,
-            },
-            Checkpoint {
-                ledger_seq: 800000,
-                checkpoint_hash: "ghi".to_string(),
-                timestamp: now - Duration::days(10),
-                size_bytes: 1000,
-                path: "/test/3".to_string(),
-                is_valid: true,
-            },
-        ];
+            })
+            .collect();
+
+        // Add one old checkpoint (by ledger)
+        checkpoints.push(Checkpoint {
+            ledger_seq: 800000,
+            checkpoint_hash: "old-ledger".to_string(),
+            timestamp: now - Duration::days(40), // Also old by time but we use ledger-based
+            size_bytes: 1000,
+            path: "/test/old-ledger".to_string(),
+            is_valid: true,
+        });
 
         let (deletable, retained) = identify_deletable_checkpoints(
             &checkpoints,
@@ -800,7 +793,7 @@ mod tests {
         assert_eq!(deletable.len(), 1);
         assert_eq!(deletable[0].ledger_seq, 800000);
 
-        assert_eq!(retained.len(), 2);
+        assert_eq!(retained.len(), 10);
     }
 
     #[test]

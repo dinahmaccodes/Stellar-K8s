@@ -193,6 +193,9 @@ pub struct StellarNodeSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forensic_snapshot: Option<ForensicSnapshotConfig>,
 
+    /// NAT Traversal sidecar configuration (STUN/TURN/ICE) for P2P networking
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nat_traversal: Option<super::types::NatTraversalConfig>,
     /// Label propagation filter policy for child resources.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label_propagation: Option<LabelPropagationConfig>,
@@ -225,6 +228,53 @@ fn default_replicas() -> i32 {
     1
 }
 
+impl Default for StellarNodeSpec {
+    fn default() -> Self {
+        Self {
+            node_type: NodeType::Validator,
+            network: StellarNetwork::Testnet,
+            version: "v21.0.0".to_string(),
+            history_mode: Default::default(),
+            resources: Default::default(),
+            storage: Default::default(),
+            validator_config: None,
+            read_pool_endpoint: None,
+            horizon_config: None,
+            soroban_config: None,
+            replicas: default_replicas(),
+            min_available: None,
+            max_unavailable: None,
+            suspended: false,
+            alerting: false,
+            database: None,
+            managed_database: None,
+            autoscaling: None,
+            vpa_config: None,
+            ingress: None,
+            load_balancer: None,
+            global_discovery: None,
+            cross_cluster: None,
+            strategy: Default::default(),
+            maintenance_mode: false,
+            network_policy: None,
+            dr_config: None,
+            pod_anti_affinity: Default::default(),
+            placement: Default::default(),
+            topology_spread_constraints: None,
+            cve_handling: None,
+            snapshot_schedule: None,
+            restore_from_snapshot: None,
+            read_replica_config: None,
+            db_maintenance_config: None,
+            oci_snapshot: None,
+            service_mesh: None,
+            forensic_snapshot: None,
+            nat_traversal: None,
+            resource_meta: None,
+        }
+    }
+}
+
 impl StellarNodeSpec {
     /// Get the network passphrase based on network type and custom string
     pub fn network_passphrase(&self) -> &str {
@@ -250,6 +300,7 @@ impl StellarNodeSpec {
     ///
     /// let spec = StellarNodeSpec {
     ///     // ... configuration
+    ///     ..Default::default()
     /// # node_type: Default::default(),
     /// # network: Default::default(),
     /// # version: "v21".to_string(),
@@ -546,6 +597,26 @@ impl StellarNodeSpec {
         }
         if let Some(ref mesh) = self.service_mesh {
             validate_service_mesh(mesh, &mut errors);
+        }
+
+        // 4. NAT Traversal Validation
+        if let Some(nat) = &self.nat_traversal {
+            if nat.enabled {
+                if nat.stun_server.is_none() && nat.turn_server.is_none() {
+                    errors.push(SpecValidationError::new(
+                        "spec.natTraversal",
+                        "Neither stunServer nor turnServer is provided",
+                        "Must provide at least one STUN or TURN server when natTraversal is enabled.",
+                    ));
+                }
+                if nat.turn_server.is_some() && nat.turn_credentials_secret_ref.is_none() {
+                    errors.push(SpecValidationError::new(
+                        "spec.natTraversal.turnCredentialsSecretRef",
+                        "turnCredentialsSecretRef is required when turnServer is provided",
+                        "Provide a Secret reference containing 'username' and 'password' keys for the TURN server.",
+                    ));
+                }
+            }
         }
 
         if errors.is_empty() {
@@ -1210,21 +1281,15 @@ mod tests {
             node_type: NodeType::Validator,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
-            history_mode: Default::default(),
-            resources: Default::default(),
-            storage: Default::default(),
             validator_config: Some(ValidatorConfig {
                 seed_secret_ref: "test".to_string(),
-                seed_secret_source: Default::default(),
-                quorum_set: None,
-                enable_history_archive: false,
-                history_archive_urls: vec![],
-                catchup_complete: false,
-                key_source: Default::default(),
-                kms_config: None,
-                vl_source: None,
-                hsm_config: None,
+                ..Default::default()
             }),
+            strategy: RolloutStrategy::Canary(CanaryConfig {
+                weight: 10,
+                check_interval_seconds: 300,
+            }),
+            ..Default::default()
             horizon_config: None,
             soroban_config: None,
             replicas: 1,
@@ -1277,20 +1342,18 @@ mod tests {
             node_type: NodeType::Horizon,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
-            history_mode: Default::default(),
-            resources: Default::default(),
-            storage: Default::default(),
-            validator_config: None,
             horizon_config: Some(HorizonConfig {
                 database_secret_ref: "test".to_string(),
                 enable_ingest: true,
                 stellar_core_url: "http://core".to_string(),
-                ingest_workers: 1,
-                enable_experimental_ingestion: false,
-                auto_migration: false,
+                ..Default::default()
             }),
-            soroban_config: None,
             replicas: 3,
+            strategy: RolloutStrategy::Canary(CanaryConfig {
+                weight: 20,
+                check_interval_seconds: 300,
+            }),
+            ..Default::default()
             min_available: None,
             max_unavailable: None,
             suspended: false,
@@ -1341,13 +1404,8 @@ mod tests {
             node_type: NodeType::Validator,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
-            history_mode: Default::default(),
-            resources: Default::default(),
-            storage: Default::default(),
-            validator_config: None,
-            horizon_config: None,
-            soroban_config: None,
             replicas: 1,
+            ..Default::default()
             min_available: None,
             max_unavailable: None,
             suspended: false,

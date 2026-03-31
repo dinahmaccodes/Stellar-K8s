@@ -232,6 +232,7 @@ mod tests {
                     max_events_per_request: 10000,
                 }),
                 replicas: 2,
+                ..Default::default()
                 min_available: None,
                 max_unavailable: None,
                 suspended: false,

@@ -83,6 +83,10 @@ pub enum Error {
     /// SQLx error
     #[error("[SK8S-018] SQL error: {0}")]
     SqlxError(#[from] sqlx::Error),
+
+    /// Kubeconfig error
+    #[error("[SK8S-019] Kubeconfig error: {0}")]
+    KubeconfigError(#[from] kube::config::KubeconfigError),
 }
 
 /// Result type alias for operator operations
@@ -126,6 +130,7 @@ impl Error {
             Error::IoError(e) => format!("[SK8S-016] I/O error: {e}"),
             Error::MaintenanceError(msg) => format!("[SK8S-017] Database maintenance error: {msg}"),
             Error::SqlxError(e) => format!("[SK8S-018] SQL error: {e}"),
+            Error::KubeconfigError(e) => format!("[SK8S-019] Kubeconfig error: {e}"),
         }
     }
 }

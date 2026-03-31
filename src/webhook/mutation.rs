@@ -275,19 +275,12 @@ mod tests {
 
     #[test]
     fn test_standard_labels() {
-        use crate::crd::{HistoryMode, ResourceRequirements, StorageConfig};
-
         let spec = StellarNodeSpec {
             node_type: NodeType::Validator,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
-            history_mode: HistoryMode::default(),
-            resources: ResourceRequirements::default(),
-            storage: StorageConfig::default(),
-            validator_config: None,
-            horizon_config: None,
-            soroban_config: None,
             replicas: 1,
+            ..Default::default()
             min_available: None,
             max_unavailable: None,
             suspended: false,
@@ -340,19 +333,12 @@ mod tests {
 
     #[test]
     fn test_standard_annotations() {
-        use crate::crd::{HistoryMode, ResourceRequirements, StorageConfig};
-
         let spec = StellarNodeSpec {
             node_type: NodeType::Horizon,
             network: StellarNetwork::Mainnet,
             version: "v2.31.0".to_string(),
-            history_mode: HistoryMode::default(),
-            resources: ResourceRequirements::default(),
-            storage: StorageConfig::default(),
-            validator_config: None,
-            horizon_config: None,
-            soroban_config: None,
             replicas: 1,
+            ..Default::default()
             min_available: None,
             max_unavailable: None,
             suspended: false,

@@ -51,6 +51,7 @@ async fn main() -> Result<()> {
 
         match pods.log_stream(&pod_name, &log_params).await {
             Ok(stream) => {
+                use futures::AsyncBufReadExt;
                 let mut lines = stream.lines();
                 while let Some(line) = lines.next().await {
                     match line {

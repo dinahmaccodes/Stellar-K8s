@@ -255,6 +255,7 @@ mod tests {
                     enable_experimental_ingestion: false,
                     auto_migration: true,
                 }),
+                ..Default::default()
                 validator_config: None,
                 soroban_config: None,
                 min_available: None,
@@ -364,6 +365,7 @@ mod tests {
                 enable_experimental_ingestion: false,
                 auto_migration: true,
             }),
+            ..Default::default()
             validator_config: None,
             soroban_config: None,
             min_available: None,

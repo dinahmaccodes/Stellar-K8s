@@ -7,8 +7,7 @@
 mod stellar_node_spec_validation {
     use crate::crd::{
         AutoscalingConfig, HorizonConfig, IngressConfig, IngressHost, IngressPath, NodeType,
-        ResourceRequirements, ResourceSpec, SorobanConfig, SpecValidationError, StellarNetwork,
-        StellarNodeSpec, StorageConfig, ValidatorConfig,
+        SorobanConfig, SpecValidationError, StellarNetwork, StellarNodeSpec, ValidatorConfig,
     };
 
     /// Helper to create a minimal valid StellarNodeSpec for a Validator
@@ -17,21 +16,11 @@ mod stellar_node_spec_validation {
             node_type: NodeType::Validator,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
-            history_mode: Default::default(),
-            resources: default_resources(),
-            storage: default_storage(),
             validator_config: Some(ValidatorConfig {
                 seed_secret_ref: "validator-seed".to_string(),
-                seed_secret_source: Default::default(),
-                quorum_set: None,
-                enable_history_archive: false,
-                history_archive_urls: vec![],
-                catchup_complete: false,
-                key_source: Default::default(),
-                kms_config: None,
-                vl_source: None,
-                hsm_config: None,
+                ..Default::default()
             }),
+            ..Default::default()
             horizon_config: None,
             soroban_config: None,
             replicas: 1,
@@ -76,20 +65,14 @@ mod stellar_node_spec_validation {
             node_type: NodeType::Horizon,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
-            history_mode: Default::default(),
-            resources: default_resources(),
-            storage: default_storage(),
-            validator_config: None,
             horizon_config: Some(HorizonConfig {
                 database_secret_ref: "horizon-db".to_string(),
                 enable_ingest: true,
                 stellar_core_url: "http://stellar-core:11626".to_string(),
-                ingest_workers: 1,
-                enable_experimental_ingestion: false,
-                auto_migration: false,
+                ..Default::default()
             }),
-            soroban_config: None,
             replicas: 2,
+            ..Default::default()
             min_available: None,
             max_unavailable: None,
             suspended: false,
@@ -131,18 +114,9 @@ mod stellar_node_spec_validation {
             node_type: NodeType::SorobanRpc,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
-            history_mode: Default::default(),
-            resources: default_resources(),
-            storage: default_storage(),
-            validator_config: None,
-            horizon_config: None,
             soroban_config: Some(SorobanConfig {
                 stellar_core_url: "http://stellar-core:11626".to_string(),
-                #[allow(deprecated)]
-                captive_core_config: None,
-                captive_core_structured_config: None,
-                enable_preflight: true,
-                max_events_per_request: 10000,
+                ..Default::default()
             }),
             replicas: 2,
             min_available: None,

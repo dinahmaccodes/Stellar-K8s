@@ -821,8 +821,8 @@ mod tests {
                 node_type,
                 network: StellarNetwork::Testnet,
                 version: "v21.0.0".to_string(),
-                history_mode: Default::default(),
                 replicas: 1,
+                ..Default::default()
                 resources: Default::default(),
                 storage: Default::default(),
                 validator_config: None,
