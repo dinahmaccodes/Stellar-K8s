@@ -17,6 +17,9 @@ mod stellar_node_spec_validation {
             node_type: NodeType::Validator,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
+            history_mode: Default::default(),
+            resources: Default::default(),
+            storage: Default::default(),
             validator_config: Some(ValidatorConfig {
                 seed_secret_ref: "validator-seed".to_string(),
                 ..Default::default()
@@ -56,6 +59,7 @@ mod stellar_node_spec_validation {
             read_pool_endpoint: None,
             sidecars: None,
             custom_network_passphrase: None,
+            nat_traversal: None,
         }
     }
 
@@ -65,12 +69,17 @@ mod stellar_node_spec_validation {
             node_type: NodeType::Horizon,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
+            history_mode: Default::default(),
+            resources: Default::default(),
+            storage: Default::default(),
+            validator_config: None,
             horizon_config: Some(HorizonConfig {
                 database_secret_ref: "horizon-db".to_string(),
                 enable_ingest: true,
                 stellar_core_url: "http://stellar-core:11626".to_string(),
                 ..Default::default()
             }),
+            soroban_config: None,
             replicas: 2,
             min_available: None,
             max_unavailable: None,
@@ -104,6 +113,7 @@ mod stellar_node_spec_validation {
             read_pool_endpoint: None,
             sidecars: None,
             custom_network_passphrase: None,
+            nat_traversal: None,
         }
     }
 
@@ -113,6 +123,11 @@ mod stellar_node_spec_validation {
             node_type: NodeType::SorobanRpc,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
+            history_mode: Default::default(),
+            resources: Default::default(),
+            storage: Default::default(),
+            validator_config: None,
+            horizon_config: None,
             soroban_config: Some(SorobanConfig {
                 stellar_core_url: "http://stellar-core:11626".to_string(),
                 ..Default::default()
@@ -150,6 +165,7 @@ mod stellar_node_spec_validation {
             read_pool_endpoint: None,
             sidecars: None,
             custom_network_passphrase: None,
+        nat_traversal: None,
         }
     }
 

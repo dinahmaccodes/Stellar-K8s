@@ -23,6 +23,7 @@ mod tests {
             failover_dns: None,
             health_check_interval: 30,
             drill_schedule: None,
+            archive_integrity_config: None,
         }
     }
 

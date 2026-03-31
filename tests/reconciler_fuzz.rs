@@ -1,3 +1,4 @@
+
 //! State-machine fuzzer for the StellarNode reconciler.
 //!
 //! Uses proptest to generate random mutations of StellarNodeSpec and random
@@ -22,6 +23,26 @@ use stellar_k8s::crd::{
     ValidatorConfig,
 };
 
+// --- Helper for creating reload handles ---
+
+fn make_reload_handle() -> tracing_subscriber::reload::Handle<
+    tracing_subscriber::EnvFilter,
+    tracing_subscriber::Registry,
+> {
+    let env_filter = tracing_subscriber::EnvFilter::from_default_env();
+    let (_layer, handle): (
+        tracing_subscriber::reload::Layer<
+            tracing_subscriber::EnvFilter,
+            tracing_subscriber::Registry,
+        >,
+        tracing_subscriber::reload::Handle<
+            tracing_subscriber::EnvFilter,
+            tracing_subscriber::Registry,
+        >,
+    ) = tracing_subscriber::reload::Layer::new(env_filter);
+    handle
+}
+
 // --- Strategy helpers for StellarNodeSpec ---
 
 fn default_resources() -> ResourceRequirements {
@@ -39,10 +60,12 @@ fn default_resources() -> ResourceRequirements {
 
 fn default_storage() -> StorageConfig {
     StorageConfig {
+        mode: Default::default(),
         storage_class: "standard".to_string(),
         size: "100Gi".to_string(),
         retention_policy: Default::default(),
         annotations: None,
+        node_affinity: None,
     }
 }
 
@@ -93,6 +116,16 @@ fn base_validator_spec() -> StellarNodeSpec {
         service_mesh: None,
         read_pool_endpoint: None,
         resource_meta: None,
+        snapshot_schedule: None,
+        restore_from_snapshot: None,
+        db_maintenance_config: None,
+        forensic_snapshot: None,
+        nat_traversal: None,
+        custom_network_passphrase: None,
+        placement: Default::default(),
+        pod_anti_affinity: Default::default(),
+        label_propagation: None,
+        sidecars: None,
     }
 }
 
@@ -139,6 +172,16 @@ fn base_horizon_spec() -> StellarNodeSpec {
         service_mesh: None,
         read_pool_endpoint: None,
         resource_meta: None,
+        snapshot_schedule: None,
+        restore_from_snapshot: None,
+        db_maintenance_config: None,
+        forensic_snapshot: None,
+        nat_traversal: None,
+        custom_network_passphrase: None,
+        placement: Default::default(),
+        pod_anti_affinity: Default::default(),
+        label_propagation: None,
+        sidecars: None,
     }
 }
 
@@ -185,6 +228,16 @@ fn base_soroban_spec() -> StellarNodeSpec {
         service_mesh: None,
         read_pool_endpoint: None,
         resource_meta: None,
+        snapshot_schedule: None,
+        restore_from_snapshot: None,
+        db_maintenance_config: None,
+        forensic_snapshot: None,
+        nat_traversal: None,
+        custom_network_passphrase: None,
+        placement: Default::default(),
+        pod_anti_affinity: Default::default(),
+        label_propagation: None,
+        sidecars: None,
     }
 }
 
@@ -267,6 +320,17 @@ async fn reconcile_with_failing_client_never_panics_and_converges() {
         mtls_config: None,
         dry_run: false,
         is_leader: Arc::new(AtomicBool::new(true)),
+        watch_namespace: None,
+        event_reporter: kube::runtime::events::Reporter {
+            controller: "stellar-operator".to_string(),
+            instance: None,
+        },
+        operator_config: std::sync::Arc::new(Default::default()),
+        reconcile_id_counter: std::sync::atomic::AtomicU64::new(0),
+        last_reconcile_success: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        log_reload_handle: make_reload_handle(),
+        log_level_expires_at: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        last_event_received: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
     });
     let node = make_node(
         base_validator_spec(),

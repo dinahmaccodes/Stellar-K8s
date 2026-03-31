@@ -135,6 +135,9 @@ mod tests {
                 annotations: None,
                 ..Default::default()
             },
+            validator_config: None,
+            horizon_config: None,
+            soroban_config: None,
             replicas: 1,
             min_available: None,
             max_unavailable: None,

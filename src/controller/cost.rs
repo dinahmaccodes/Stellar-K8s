@@ -398,6 +398,9 @@ mod tests {
             read_pool_endpoint: None,
             resource_meta: None,
             label_propagation: None,
+            sidecars: None,
+            nat_traversal: None,
+            custom_network_passphrase: None,
         }
     }
 }

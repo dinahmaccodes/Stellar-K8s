@@ -121,6 +121,7 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
                 resource_meta: None,
                 vpa_config: None,
                 custom_network_passphrase: None,
+            nat_traversal: None,
             },
             status: None,
         }
@@ -170,6 +171,11 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
                 }),
                 soroban_config: None,
                 replicas: 2,
+                min_available: None,
+                max_unavailable: None,
+                suspended: false,
+                alerting: false,
+                database: None,
                 managed_database: Some(ManagedDatabaseConfig {
                     instances: 2,
                     storage: StorageConfig {
@@ -209,6 +215,7 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
                 resource_meta: None,
                 vpa_config: None,
                 custom_network_passphrase: None,
+            nat_traversal: None,
             },
             status: None,
         }
@@ -300,6 +307,7 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
                 resource_meta: None,
                 vpa_config: None,
                 custom_network_passphrase: None,
+            nat_traversal: None,
             },
             status: None,
         }
@@ -321,8 +329,6 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
         let client = Client::try_default()
             .await
             .unwrap_or_else(|_| panic!("Cannot create test client"));
-        let env_filter = tracing_subscriber::EnvFilter::from_default_env();
-        let (_layer, reload_handle) = tracing_subscriber::reload::Layer::new(env_filter);
         let state = Arc::new(ControllerState {
             client: client.clone(),
             enable_mtls: false,
@@ -338,9 +344,9 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
             operator_config: Arc::new(Default::default()),
             reconcile_id_counter: std::sync::atomic::AtomicU64::new(0),
             last_reconcile_success: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            log_reload_handle: reload_handle,
             log_reload_handle: make_reload_handle(),
             log_level_expires_at: Arc::new(tokio::sync::Mutex::new(None)),
+            last_event_received: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         });
 
         // Test with a retriable error (network-related)
@@ -362,8 +368,6 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
         let client = Client::try_default()
             .await
             .unwrap_or_else(|_| panic!("Cannot create test client"));
-        let env_filter = tracing_subscriber::EnvFilter::from_default_env();
-        let (_layer, reload_handle) = tracing_subscriber::reload::Layer::new(env_filter);
         let state = Arc::new(ControllerState {
             client: client.clone(),
             enable_mtls: false,
@@ -379,9 +383,9 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
             operator_config: Arc::new(Default::default()),
             reconcile_id_counter: std::sync::atomic::AtomicU64::new(0),
             last_reconcile_success: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            log_reload_handle: reload_handle,
             log_reload_handle: make_reload_handle(),
             log_level_expires_at: Arc::new(tokio::sync::Mutex::new(None)),
+            last_event_received: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         });
 
         // Test with validation error (non-retriable)
@@ -402,8 +406,6 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
         let client = Client::try_default()
             .await
             .unwrap_or_else(|_| panic!("Cannot create test client"));
-        let env_filter = tracing_subscriber::EnvFilter::from_default_env();
-        let (_layer, reload_handle) = tracing_subscriber::reload::Layer::new(env_filter);
         let state = Arc::new(ControllerState {
             client: client.clone(),
             enable_mtls: false,
@@ -419,9 +421,8 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
             operator_config: Arc::new(Default::default()),
             reconcile_id_counter: std::sync::atomic::AtomicU64::new(0),
             last_reconcile_success: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            log_reload_handle: reload_handle,
-            log_reload_handle: make_reload_handle(),
             log_level_expires_at: Arc::new(tokio::sync::Mutex::new(None)),
+            last_event_received: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         });
 
         let errors = vec![
@@ -634,9 +635,6 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
         let client = Client::try_default()
             .await
             .unwrap_or_else(|_| panic!("Cannot create test client"));
-
-        let env_filter = tracing_subscriber::EnvFilter::from_default_env();
-        let (_layer, reload_handle) = tracing_subscriber::reload::Layer::new(env_filter);
         let state = ControllerState {
             client: client.clone(),
             enable_mtls: true,
@@ -652,9 +650,9 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
             operator_config: Arc::new(Default::default()),
             reconcile_id_counter: std::sync::atomic::AtomicU64::new(0),
             last_reconcile_success: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            log_reload_handle: reload_handle,
             log_reload_handle: make_reload_handle(),
             log_level_expires_at: Arc::new(tokio::sync::Mutex::new(None)),
+            last_event_received: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
 
         assert_eq!(state.operator_namespace, "test-namespace");
@@ -671,8 +669,6 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
             .await
             .unwrap_or_else(|_| panic!("Cannot create test client"));
 
-        let env_filter = tracing_subscriber::EnvFilter::from_default_env();
-        let (_layer, reload_handle) = tracing_subscriber::reload::Layer::new(env_filter);
         let state = ControllerState {
             client,
             enable_mtls: false,
@@ -688,9 +684,9 @@ VALIDATORS=["VALIDATOR1", "VALIDATOR2"]"#
             operator_config: Arc::new(Default::default()),
             reconcile_id_counter: std::sync::atomic::AtomicU64::new(0),
             last_reconcile_success: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            log_reload_handle: reload_handle,
             log_reload_handle: make_reload_handle(),
             log_level_expires_at: Arc::new(tokio::sync::Mutex::new(None)),
+            last_event_received: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
 
         assert!(

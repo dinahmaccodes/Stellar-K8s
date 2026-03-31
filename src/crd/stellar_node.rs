@@ -1288,10 +1288,13 @@ mod tests {
                 seed_secret_ref: "test".to_string(),
                 ..Default::default()
             }),
-            strategy: RolloutStrategy::Canary(CanaryConfig {
-                weight: 10,
-                check_interval_seconds: 300,
-            }),
+            strategy: RolloutStrategy {
+                strategy_type: crate::crd::types::RolloutStrategyType::Canary,
+                canary: Some(CanaryConfig {
+                    weight: 10,
+                    check_interval_seconds: 300,
+                }),
+            },
             ..Default::default()
         };
 
@@ -1311,10 +1314,13 @@ mod tests {
                 ..Default::default()
             }),
             replicas: 3,
-            strategy: RolloutStrategy::Canary(CanaryConfig {
-                weight: 20,
-                check_interval_seconds: 300,
-            }),
+            strategy: RolloutStrategy {
+                strategy_type: crate::crd::types::RolloutStrategyType::Canary,
+                canary: Some(CanaryConfig {
+                    weight: 20,
+                    check_interval_seconds: 300,
+                }),
+            },
             ..Default::default()
         };
 

@@ -484,6 +484,8 @@ mod tests {
                     vl_source: None,
                     hsm_config: None,
                 }),
+                horizon_config: None,
+                soroban_config: None,
                 replicas: 1,
                 min_available: None,
                 max_unavailable: None,

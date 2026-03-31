@@ -263,6 +263,7 @@ mod tests {
                 vpa_config: None,
                 read_pool_endpoint: None,
                 sidecars: None,
+                nat_traversal: None,
                 custom_network_passphrase: None,
             },
             status: None,
@@ -563,7 +564,7 @@ mod tests {
         };
 
         let mut node = create_test_node(config);
-        node.spec.network = StellarNetwork::Custom;
+        node.spec.network = StellarNetwork::Custom(custom_passphrase.to_string());
         node.spec.custom_network_passphrase = Some(custom_passphrase.to_string());
 
         let builder = CaptiveCoreConfigBuilder::from_node_config(&node).unwrap();

@@ -280,6 +280,12 @@ mod tests {
             node_type: NodeType::Validator,
             network: StellarNetwork::Testnet,
             version: "v21.0.0".to_string(),
+            history_mode: Default::default(),
+            resources: Default::default(),
+            storage: Default::default(),
+            validator_config: None,
+            horizon_config: None,
+            soroban_config: None,
             replicas: 1,
             min_available: None,
             max_unavailable: None,
@@ -313,6 +319,7 @@ mod tests {
             sidecars: None,
             label_propagation: None,
             custom_network_passphrase: None,
+        nat_traversal: None,
         };
 
         let labels = get_standard_labels(&spec, "my-validator");
@@ -337,6 +344,12 @@ mod tests {
             node_type: NodeType::Horizon,
             network: StellarNetwork::Mainnet,
             version: "v2.31.0".to_string(),
+            history_mode: Default::default(),
+            resources: Default::default(),
+            storage: Default::default(),
+            validator_config: None,
+            horizon_config: None,
+            soroban_config: None,
             replicas: 1,
             min_available: None,
             max_unavailable: None,
@@ -370,6 +383,7 @@ mod tests {
             sidecars: None,
             label_propagation: None,
             custom_network_passphrase: None,
+        nat_traversal: None,
         };
 
         let annotations = get_standard_annotations(&spec);

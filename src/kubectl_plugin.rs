@@ -856,6 +856,9 @@ mod tests {
                 resource_meta: None,
                 read_pool_endpoint: None,
                 sidecars: None,
+                history_mode: Default::default(),
+                custom_network_passphrase: None,
+                nat_traversal: None,
             },
             status: Some(StellarNodeStatus {
                 #[allow(deprecated)]

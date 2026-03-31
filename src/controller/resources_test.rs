@@ -69,7 +69,6 @@ mod tests {
             history_mode: Default::default(),
             storage: Default::default(),
             validator_config: None,
-            read_pool_endpoint: None,
             horizon_config: None,
             soroban_config: None,
             nat_traversal: None,
