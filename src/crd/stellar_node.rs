@@ -301,50 +301,7 @@ impl StellarNodeSpec {
     /// ```rust,no_run
     /// use stellar_k8s::crd::StellarNodeSpec;
     ///
-    /// let spec = StellarNodeSpec {
-    ///     // ... configuration
-    ///     ..Default::default()
-    /// # node_type: Default::default(),
-    /// # network: Default::default(),
-    /// # version: "v21".to_string(),
-    /// # history_mode: Default::default(),
-    /// # resources: Default::default(),
-    /// # storage: Default::default(),
-    /// # validator_config: None,
-    /// # horizon_config: None,
-    /// # soroban_config: None,
-    /// # replicas: 1,
-    /// # min_available: None,
-    /// # max_unavailable: None,
-    /// # suspended: false,
-    /// # alerting: false,
-    /// # database: None,
-    /// # managed_database: None,
-    /// # autoscaling: None,
-    /// # ingress: None,
-    /// # load_balancer: None,
-    /// # global_discovery: None,
-    /// # cross_cluster: None,
-    /// # snapshot_schedule: None,
-    /// # restore_from_snapshot: None,
-    /// # strategy: Default::default(),
-    /// # maintenance_mode: false,
-    /// # network_policy: None,
-    /// # dr_config: None,
-    /// # pod_anti_affinity: Default::default(),
-    /// # topology_spread_constraints: None,
-    /// # cve_handling: None,
-    /// # read_replica_config: None,
-    /// # db_maintenance_config: None,
-    /// # oci_snapshot: None,
-    /// # service_mesh: None,
-    /// # forensic_snapshot: None,
-    /// # label_propagation: None,
-    /// # vpa_config: None,
-    /// # resource_meta: None,
-    /// # read_pool_endpoint: None,
-    /// # sidecars: None,
-    /// };
+    /// let spec = StellarNodeSpec::default();
     /// match spec.validate() {
     ///     Ok(_) => println!("Valid spec"),
     ///     Err(errors) => {

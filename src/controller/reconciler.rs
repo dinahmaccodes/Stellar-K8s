@@ -165,6 +165,7 @@ impl ControllerState {
 ///         last_reconcile_success: Arc::new(AtomicU64::new(0)),
 ///         log_reload_handle: reload_handle,
 ///         log_level_expires_at: Arc::new(tokio::sync::Mutex::new(None)),
+///         last_event_received: Arc::new(AtomicU64::new(0)),
 ///     });
 ///     run_controller(state).await?;
 ///     Ok(())
