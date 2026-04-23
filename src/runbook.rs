@@ -532,7 +532,9 @@ fn generate_resource_troubleshooting(name: &str, namespace: &str) -> String {
         "# Check for pending pods\nkubectl get pods -n {} -l app.kubernetes.io/instance={} --field-selector=status.phase=Pending\n\n",
         namespace, name
     ));
-    runbook.push_str("# Check node capacity\nkubectl describe nodes | grep -A 5 'Allocated resources'\n");
+    runbook.push_str(
+        "# Check node capacity\nkubectl describe nodes | grep -A 5 'Allocated resources'\n",
+    );
     runbook.push_str("```\n\n");
 
     runbook

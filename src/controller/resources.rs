@@ -43,9 +43,8 @@ use crate::crd::{
     BackupConfiguration, BarmanObjectStore, BootstrapConfiguration, Cluster, ClusterSpec,
     HistoryMode, HsmProvider, IngressConfig, InitDbConfiguration, KeySource, ManagedDatabaseConfig,
     MonitoringConfiguration, NetworkPolicyConfig, NodeType, PgBouncerSpec, Pooler, PoolerCluster,
-    PoolerSpec, PostgresConfiguration, S3Credentials,
-    SecretKeySelector as CnpgSecretKeySelector, StellarNode, StellarNodeSpec, StorageConfiguration,
-    WalBackupConfiguration,
+    PoolerSpec, PostgresConfiguration, S3Credentials, SecretKeySelector as CnpgSecretKeySelector,
+    StellarNode, StellarNodeSpec, StorageConfiguration, WalBackupConfiguration,
 };
 use crate::error::{Error, Result};
 use crate::scheduler::scoring::extract_peer_names_from_toml;
