@@ -17,6 +17,7 @@ THRESHOLD_KB=5120                         # 5 MB growth limit
 NODE_COUNT=100
 TEST_NAMESPACE="${TEST_NAMESPACE:-soak-test}"
 RESULTS_FILE="${RESULTS_FILE:-/tmp/soak-memory.log}"
+CLEANUP_DONE=false
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,46 @@ delete_nodes() {
     -n "$TEST_NAMESPACE" \
     --timeout=120s 2>/dev/null || true
 }
+
+cleanup_resources() {
+  local reason="${1:-exit}"
+  if [[ "$CLEANUP_DONE" == "true" ]]; then
+    echo "[cleanup] Already completed (reason: ${reason})"
+    return
+  fi
+  CLEANUP_DONE=true
+
+  echo "[cleanup] Starting cleanup (reason: ${reason})..."
+  delete_nodes || true
+  kubectl delete namespace "$TEST_NAMESPACE" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  echo "[cleanup] Cleanup finished for namespace: ${TEST_NAMESPACE}"
+}
+
+handle_exit() {
+  local exit_code=$?
+  cleanup_resources "exit"
+  if [[ $exit_code -ne 0 ]]; then
+    echo "[cleanup] Exiting with failure code: ${exit_code}"
+  else
+    echo "[cleanup] Exiting successfully"
+  fi
+  exit "$exit_code"
+}
+
+handle_signal() {
+  local signal_name="$1"
+  local signal_code=1
+  case "$signal_name" in
+    INT) signal_code=130 ;;
+    TERM) signal_code=143 ;;
+  esac
+  echo "[cleanup] Received ${signal_name}; requesting graceful shutdown..."
+  exit "$signal_code"
+}
+
+trap 'handle_signal INT' INT
+trap 'handle_signal TERM' TERM
+trap 'handle_exit' EXIT
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
