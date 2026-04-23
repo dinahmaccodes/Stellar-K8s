@@ -1,4 +1,4 @@
-name: Verify Operator Boot (Issue #146)
+name: "Verify Operator Boot (Issue #146)"
 
 # Verifies that the operator binary builds and connects to a live kind cluster.
 # Acceptance criteria:

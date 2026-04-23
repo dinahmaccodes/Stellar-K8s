@@ -55,7 +55,8 @@ jobs:
           echo "Changed files:"
           echo "$CHANGED_FILES"
 
-          if echo "$CHANGED_FILES" | grep -Eq '^(Dockerfile|\.dockerignore|Cargo\.toml|Cargo\.lock|src/|config/|Makefile)'; then
+          DOCKER_PATTERN='^(Dockerfile|\.dockerignore|Cargo\.toml|Cargo\.lock|src/|config/|Makefile)'
+          if echo "$CHANGED_FILES" | grep -Eq "$DOCKER_PATTERN"; then
             echo "docker=true" >> "$GITHUB_OUTPUT"
           else
             echo "docker=false" >> "$GITHUB_OUTPUT"
@@ -67,7 +68,8 @@ jobs:
             echo "helm=false" >> "$GITHUB_OUTPUT"
           fi
 
-          if echo "$CHANGED_FILES" | grep -Eq '^(docs/|scripts/generate-api-docs\.py|config/crd/|src/crd/|src/rest_api/|Makefile)'; then
+          API_DOCS_PATTERN='^(docs/|scripts/generate-api-docs\.py|config/crd/|src/crd/|src/rest_api/|Makefile)'
+          if echo "$CHANGED_FILES" | grep -Eq "$API_DOCS_PATTERN"; then
             echo "api_docs=true" >> "$GITHUB_OUTPUT"
           else
             echo "api_docs=false" >> "$GITHUB_OUTPUT"
@@ -124,12 +126,14 @@ jobs:
           echo "stellar-operator version output: $BIN_VERSION"
 
           [[ "$CARGO_VERSION" == "$EXPECTED_VERSION" ]] || {
-            echo "::error::Cargo.toml version ($CARGO_VERSION) does not match expected release version ($EXPECTED_VERSION)"
+            echo "::error::Cargo.toml version ($CARGO_VERSION) does not match expected release version"
+            echo "::error::Expected: $EXPECTED_VERSION"
             exit 1
           }
 
           [[ "$BIN_VERSION" == "$EXPECTED_VERSION" ]] || {
-            echo "::error::stellar-operator version output ($BIN_VERSION) does not match expected release version ($EXPECTED_VERSION)"
+            echo "::error::stellar-operator version output ($BIN_VERSION) does not match expected release version"
+            echo "::error::Expected: $EXPECTED_VERSION"
             exit 1
           }
 
