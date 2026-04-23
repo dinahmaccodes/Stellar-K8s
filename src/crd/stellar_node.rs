@@ -14,9 +14,9 @@ use super::types::{
     DisasterRecoveryStatus, ExternalDatabaseConfig, ForensicSnapshotConfig, GlobalDiscoveryConfig,
     HistoryMode, HorizonConfig, IngressConfig, LabelPropagationConfig, LoadBalancerConfig,
     ManagedDatabaseConfig, NetworkPolicyConfig, NodeType, OciSnapshotConfig, PlacementConfig,
-    PodAntiAffinityStrength, ResourceRequirements, RestoreFromSnapshotConfig, RetentionPolicy,
-    RolloutStrategy, SnapshotScheduleConfig, SorobanConfig, StellarNetwork, StorageConfig,
-    ValidatorConfig, VpaConfig,
+    PodAntiAffinityStrength, ProbeConfig, ResourceRequirements, RestoreFromSnapshotConfig,
+    RetentionPolicy, RolloutStrategy, SnapshotScheduleConfig, SorobanConfig, StellarNetwork,
+    StorageConfig, ValidatorConfig, VpaConfig,
 };
 
 /// Structured validation error for `StellarNodeSpec`
@@ -222,6 +222,25 @@ pub struct StellarNodeSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<Vec<serde_json::Value>>")]
     pub sidecars: Option<Vec<k8s_openapi::api::core::v1::Container>>,
+
+    /// Optional overrides for the liveness, readiness, and startup probes on the main container.
+    ///
+    /// When set, the specified fields replace the operator's built-in probe defaults.
+    /// Unset fields continue to use the operator defaults.
+    ///
+    /// # Example
+    /// ```yaml
+    /// probes:
+    ///   liveness:
+    ///     initialDelaySeconds: 60
+    ///     periodSeconds: 15
+    ///     failureThreshold: 5
+    ///   readiness:
+    ///     initialDelaySeconds: 20
+    ///     periodSeconds: 10
+    /// ```
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probes: Option<ProbeConfig>,
 }
 
 fn default_replicas() -> i32 {
@@ -274,6 +293,7 @@ impl Default for StellarNodeSpec {
             resource_meta: None,
             custom_network_passphrase: None,
             sidecars: None,
+            probes: None,
         }
     }
 }
@@ -576,6 +596,17 @@ impl StellarNodeSpec {
                         "Provide a Secret reference containing 'username' and 'password' keys for the TURN server.",
                     ));
                 }
+            }
+        }
+
+        // 5. Probe override validation
+        if let Some(ref probe_config) = self.probes {
+            for msg in probe_config.validate() {
+                errors.push(SpecValidationError::new(
+                    "spec.probes",
+                    msg,
+                    "Ensure all probe fields are positive integers (initialDelaySeconds >= 0, others >= 1).",
+                ));
             }
         }
 

@@ -227,6 +227,102 @@ impl Default for StorageConfig {
     }
 }
 
+/// Probe configuration for liveness, readiness, and startup probes.
+///
+/// All fields are optional; unset fields fall back to the operator's built-in defaults.
+/// Values must be positive integers where applicable.
+///
+/// # Example
+/// ```yaml
+/// probes:
+///   liveness:
+///     initialDelaySeconds: 30
+///     periodSeconds: 10
+///     failureThreshold: 3
+///   readiness:
+///     initialDelaySeconds: 10
+///     periodSeconds: 5
+///   startup:
+///     failureThreshold: 30
+///     periodSeconds: 10
+/// ```
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeOverride {
+    /// Number of seconds after the container starts before the probe is initiated. Min: 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_delay_seconds: Option<i32>,
+    /// How often (in seconds) to perform the probe. Min: 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub period_seconds: Option<i32>,
+    /// Number of seconds after which the probe times out. Min: 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<i32>,
+    /// Minimum consecutive successes for the probe to be considered successful. Min: 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success_threshold: Option<i32>,
+    /// Minimum consecutive failures for the probe to be considered failed. Min: 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_threshold: Option<i32>,
+}
+
+impl ProbeOverride {
+    /// Validate that all set fields are within acceptable ranges.
+    pub fn validate(&self, field_prefix: &str) -> Vec<String> {
+        let mut errors = Vec::new();
+        if let Some(v) = self.initial_delay_seconds {
+            if v < 0 {
+                errors.push(format!("{field_prefix}.initialDelaySeconds must be >= 0, got {v}"));
+            }
+        }
+        for (name, val) in [
+            ("periodSeconds", self.period_seconds),
+            ("timeoutSeconds", self.timeout_seconds),
+            ("successThreshold", self.success_threshold),
+            ("failureThreshold", self.failure_threshold),
+        ] {
+            if let Some(v) = val {
+                if v < 1 {
+                    errors.push(format!("{field_prefix}.{name} must be >= 1, got {v}"));
+                }
+            }
+        }
+        errors
+    }
+}
+
+/// Per-container probe overrides for liveness, readiness, and startup probes.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeConfig {
+    /// Override for the liveness probe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub liveness: Option<ProbeOverride>,
+    /// Override for the readiness probe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<ProbeOverride>,
+    /// Override for the startup probe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub startup: Option<ProbeOverride>,
+}
+
+impl ProbeConfig {
+    /// Validate all probe overrides. Returns a list of error strings.
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        if let Some(p) = &self.liveness {
+            errors.extend(p.validate("spec.probes.liveness"));
+        }
+        if let Some(p) = &self.readiness {
+            errors.extend(p.validate("spec.probes.readiness"));
+        }
+        if let Some(p) = &self.startup {
+            errors.extend(p.validate("spec.probes.startup"));
+        }
+        errors
+    }
+}
+
 /// PVC retention policy on node deletion
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 pub enum RetentionPolicy {

@@ -96,6 +96,44 @@ pub(crate) fn resource_name(node: &StellarNode, suffix: &str) -> String {
     format!("{}-{}", node.name_any(), suffix)
 }
 
+/// Apply a [`ProbeOverride`] on top of an optional base [`k8s_openapi::api::core::v1::Probe`].
+/// Apply a [`ProbeOverride`] on top of an optional base [`k8s_openapi::api::core::v1::Probe`].
+///
+/// If `override_cfg` is `None`, the base probe is returned unchanged.
+/// If `base` is `None` and `override_cfg` is `Some`, a minimal probe shell is created and the
+/// overrides are applied so the operator can still honour user-supplied thresholds even when no
+/// default probe is configured.
+pub(crate) fn apply_probe_override_pub(
+    base: Option<k8s_openapi::api::core::v1::Probe>,
+    override_cfg: Option<&crate::crd::types::ProbeOverride>,
+) -> Option<k8s_openapi::api::core::v1::Probe> {
+    apply_probe_override(base, override_cfg)
+}
+
+fn apply_probe_override(
+    base: Option<k8s_openapi::api::core::v1::Probe>,
+    override_cfg: Option<&crate::crd::types::ProbeOverride>,
+) -> Option<k8s_openapi::api::core::v1::Probe> {
+    let cfg = override_cfg?;
+    let mut probe = base.unwrap_or_default();
+    if let Some(v) = cfg.initial_delay_seconds {
+        probe.initial_delay_seconds = Some(v);
+    }
+    if let Some(v) = cfg.period_seconds {
+        probe.period_seconds = Some(v);
+    }
+    if let Some(v) = cfg.timeout_seconds {
+        probe.timeout_seconds = Some(v);
+    }
+    if let Some(v) = cfg.success_threshold {
+        probe.success_threshold = Some(v);
+    }
+    if let Some(v) = cfg.failure_threshold {
+        probe.failure_threshold = Some(v);
+    }
+    Some(probe)
+}
+
 /// Create PostParams with dry-run support
 fn post_params(dry_run: bool) -> PostParams {
     if dry_run {
@@ -2126,6 +2164,9 @@ fn build_container(node: &StellarNode, enable_mtls: bool) -> Container {
             ..Default::default()
         }),
         volume_mounts: Some(volume_mounts),
+        liveness_probe: apply_probe_override(None, node.spec.probes.as_ref().and_then(|p| p.liveness.as_ref())),
+        readiness_probe: apply_probe_override(None, node.spec.probes.as_ref().and_then(|p| p.readiness.as_ref())),
+        startup_probe: apply_probe_override(None, node.spec.probes.as_ref().and_then(|p| p.startup.as_ref())),
         ..Default::default()
     }
 }

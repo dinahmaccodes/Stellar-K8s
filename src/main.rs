@@ -22,19 +22,30 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
     author,
     version,
     about = "Stellar-K8s: Cloud-Native Kubernetes Operator for Stellar Infrastructure",
-    long_about = "stellar-operator manages StellarNode custom resources on Kubernetes.\n\n\
-        It reconciles the desired state of Stellar validator, Horizon, and Soroban RPC nodes,\n\
-        handles leader election, optional mTLS, peer discovery, and a latency-aware scheduler.\n\n\
-        EXAMPLES:\n  \
-        stellar-operator run --namespace stellar-system\n  \
-        stellar-operator run --namespace stellar-system --enable-mtls\n  \
-        stellar-operator run --namespace stellar-system --scheduler\n  \
-        stellar-operator run --namespace stellar-system --dry-run\n  \
-        stellar-operator run --dump-config\n  \
-        stellar-operator webhook --bind 0.0.0.0:8443 --cert-path /tls/tls.crt --key-path /tls/tls.key\n  \
-        stellar-operator info --namespace stellar-system\n  \
-        stellar-operator check-crd\n  \
-        stellar-operator version"
+    long_about = "\
+\x1b[1;36m\
+  ███████╗████████╗███████╗██╗     ██╗      █████╗ ██████╗       ██╗  ██╗ █████╗ ███████╗\n\
+  ██╔════╝╚══██╔══╝██╔════╝██║     ██║     ██╔══██╗██╔══██╗      ██║ ██╔╝██╔══██╗██╔════╝\n\
+  ███████╗   ██║   █████╗  ██║     ██║     ███████║██████╔╝█████╗█████╔╝ ╚█████╔╝███████╗\n\
+  ╚════██║   ██║   ██╔══╝  ██║     ██║     ██╔══██║██╔══██╗╚════╝██╔═██╗ ██╔══██╗╚════██║\n\
+  ███████║   ██║   ███████╗███████╗███████╗██║  ██║██║  ██║      ██║  ██╗╚█████╔╝███████║\n\
+  ╚══════╝   ╚═╝   ╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝      ╚═╝  ╚═╝ ╚════╝ ╚══════╝\n\
+\x1b[0m\
+\x1b[1;35m  Cloud-Native Stellar Infrastructure on Kubernetes\x1b[0m\n\
+\x1b[90m  Built with Rust 🦀 · Powered by kube-rs · Apache 2.0\x1b[0m\n\n\
+stellar-operator manages StellarNode custom resources on Kubernetes.\n\n\
+It reconciles the desired state of Stellar validator, Horizon, and Soroban RPC nodes,\n\
+handles leader election, optional mTLS, peer discovery, and a latency-aware scheduler.\n\n\
+EXAMPLES:\n  \
+stellar-operator run --namespace stellar-system\n  \
+stellar-operator run --namespace stellar-system --enable-mtls\n  \
+stellar-operator run --namespace stellar-system --scheduler\n  \
+stellar-operator run --namespace stellar-system --dry-run\n  \
+stellar-operator run --dump-config\n  \
+stellar-operator webhook --bind 0.0.0.0:8443 --cert-path /tls/tls.crt --key-path /tls/tls.key\n  \
+stellar-operator info --namespace stellar-system\n  \
+stellar-operator check-crd\n  \
+stellar-operator version"
 )]
 struct Args {
     #[command(subcommand)]

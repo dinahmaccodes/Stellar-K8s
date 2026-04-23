@@ -539,3 +539,92 @@ peer-2 = "G..."
         );
     }
 }
+
+    // -----------------------------------------------------------------------
+    // apply_probe_override — #510 customizable probes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_probe_override_none_returns_none_when_no_base() {
+        let result = crate::controller::resources::apply_probe_override_pub(None, None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_probe_override_returns_base_when_no_override() {
+        use k8s_openapi::api::core::v1::Probe;
+        let base = Probe {
+            period_seconds: Some(10),
+            ..Default::default()
+        };
+        let result = crate::controller::resources::apply_probe_override_pub(Some(base.clone()), None);
+        assert_eq!(result, Some(base));
+    }
+
+    #[test]
+    fn test_probe_override_applies_all_fields() {
+        use crate::crd::types::ProbeOverride;
+        let cfg = ProbeOverride {
+            initial_delay_seconds: Some(30),
+            period_seconds: Some(15),
+            timeout_seconds: Some(5),
+            success_threshold: Some(1),
+            failure_threshold: Some(6),
+        };
+        let result = crate::controller::resources::apply_probe_override_pub(None, Some(&cfg));
+        let probe = result.expect("should produce a probe");
+        assert_eq!(probe.initial_delay_seconds, Some(30));
+        assert_eq!(probe.period_seconds, Some(15));
+        assert_eq!(probe.timeout_seconds, Some(5));
+        assert_eq!(probe.success_threshold, Some(1));
+        assert_eq!(probe.failure_threshold, Some(6));
+    }
+
+    #[test]
+    fn test_probe_override_merges_onto_base() {
+        use crate::crd::types::ProbeOverride;
+        use k8s_openapi::api::core::v1::Probe;
+        let base = Probe {
+            period_seconds: Some(10),
+            failure_threshold: Some(3),
+            ..Default::default()
+        };
+        let cfg = ProbeOverride {
+            failure_threshold: Some(10),
+            ..Default::default()
+        };
+        let result = crate::controller::resources::apply_probe_override_pub(Some(base), Some(&cfg));
+        let probe = result.expect("should produce a probe");
+        assert_eq!(probe.period_seconds, Some(10), "base period_seconds preserved");
+        assert_eq!(probe.failure_threshold, Some(10), "override failure_threshold applied");
+    }
+
+    #[test]
+    fn test_probe_config_validation_rejects_zero_period() {
+        use crate::crd::types::{ProbeConfig, ProbeOverride};
+        let cfg = ProbeConfig {
+            liveness: Some(ProbeOverride {
+                period_seconds: Some(0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let errs = cfg.validate();
+        assert!(!errs.is_empty(), "zero periodSeconds should fail validation");
+        assert!(errs[0].contains("periodSeconds"));
+    }
+
+    #[test]
+    fn test_probe_config_validation_accepts_valid_config() {
+        use crate::crd::types::{ProbeConfig, ProbeOverride};
+        let cfg = ProbeConfig {
+            liveness: Some(ProbeOverride {
+                initial_delay_seconds: Some(0),
+                period_seconds: Some(10),
+                failure_threshold: Some(3),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(cfg.validate().is_empty());
+    }
