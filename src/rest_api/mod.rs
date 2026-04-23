@@ -46,6 +46,7 @@
 //! ```
 
 mod auth;
+mod job_handlers;
 mod custom_metrics;
 mod dashboard_dto;
 mod dashboard_handlers;

@@ -21,6 +21,7 @@ use crate::controller::ControllerState;
 use crate::{Error, Result};
 
 use super::auth;
+use super::job_handlers;
 use super::custom_metrics;
 use super::dashboard_handlers;
 use super::handlers;
@@ -112,6 +113,9 @@ pub async fn run_server(
         .route("/api/v1/dashboard/nodes/:namespace/:name/actions", axum::routing::post(dashboard_handlers::execute_node_action))
         // Documentation search API
         .route("/api/v1/docs/search-index", get(handlers::get_search_index))
+        // Background job monitoring dashboard
+        .route("/api/v1/jobs", get(job_handlers::list_jobs))
+        .route("/api/v1/jobs/stats", get(job_handlers::job_stats))
         // Custom metrics API
         .route(
             "/apis/custom.metrics.k8s.io/v1beta2/namespaces/:namespace/pods/:name/:metric",

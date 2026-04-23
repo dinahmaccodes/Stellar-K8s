@@ -1054,6 +1054,7 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
         log_reload_handle: reload_handle,
         log_level_expires_at: Arc::new(tokio::sync::Mutex::new(None)),
         last_event_received: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        job_registry: Arc::new(stellar_k8s::controller::JobRegistry::new()),
     });
 
     // Start the peer discovery manager

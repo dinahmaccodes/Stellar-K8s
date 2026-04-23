@@ -55,6 +55,7 @@ pub mod maintenance;
 pub mod resource_meta;
 
 mod archive_health;
+pub mod background_jobs;
 pub mod archive_prune;
 pub mod audit;
 pub mod captive_core;
@@ -124,6 +125,7 @@ pub use peer_discovery::{
     PeerDiscoveryManager, PeerInfo,
 };
 #[cfg(feature = "reconciler-fuzz")]
+pub use background_jobs::{JobKind, JobRecord, JobRegistry, JobState, MAX_JOBS};
 pub use reconciler::reconcile_for_fuzz;
 pub use reconciler::{run_controller, ControllerState};
 pub use remediation::{can_remediate, check_stale_node, RemediationLevel, StaleCheckResult};
