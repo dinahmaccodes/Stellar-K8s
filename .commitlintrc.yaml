@@ -23,3 +23,7 @@ rules:
       - pascal-case
       - upper-case
       - lower-case
+  body-max-line-length:
+    - 2
+    - always
+    - 200

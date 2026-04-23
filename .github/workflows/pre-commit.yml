@@ -30,4 +30,9 @@ jobs:
         run: pip install pre-commit
 
       - name: Run pre-commit
-        run: pre-commit run --all-files --show-diff-on-failure
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            pre-commit run --from-ref "${{ github.event.pull_request.base.sha }}" --to-ref "${{ github.event.pull_request.head.sha }}" --show-diff-on-failure
+          else
+            pre-commit run --all-files --show-diff-on-failure
+          fi
