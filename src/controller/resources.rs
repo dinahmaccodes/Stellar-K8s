@@ -831,6 +831,52 @@ fn build_service(node: &StellarNode, enable_mtls: bool) -> Service {
     let labels = standard_labels(node);
     let name = node.name_any();
 
+    let mut annotations = BTreeMap::new();
+
+    // Collect ExternalDNS config from ValidatorConfig or LoadBalancerConfig
+    let mut dns_configs = Vec::new();
+    if let Some(vc) = &node.spec.validator_config {
+        if let Some(dns) = &vc.external_dns {
+            dns_configs.push(dns);
+        }
+    }
+    if let Some(lb) = &node.spec.load_balancer {
+        if let Some(dns) = &lb.external_dns {
+            dns_configs.push(dns);
+        }
+    }
+
+    if !dns_configs.is_empty() {
+        // Use the first one found, prioritize ValidatorConfig
+        let dns_config = dns_configs[0];
+        let mut hostnames = vec![dns_config.hostname.clone()];
+
+        // Automatically generate _stellar-peering._tcp SRV record for validators
+        if node.spec.node_type == NodeType::Validator {
+            hostnames.push(format!("_stellar-peering._tcp.{}", dns_config.hostname));
+        }
+
+        annotations.insert(
+            "external-dns.alpha.kubernetes.io/hostname".to_string(),
+            hostnames.join(", "),
+        );
+        annotations.insert(
+            "external-dns.alpha.kubernetes.io/ttl".to_string(),
+            dns_config.ttl.to_string(),
+        );
+        if let Some(provider) = &dns_config.provider {
+            annotations.insert(
+                "external-dns.alpha.kubernetes.io/provider".to_string(),
+                provider.clone(),
+            );
+        }
+        if let Some(extra_annotations) = &dns_config.annotations {
+            for (k, v) in extra_annotations {
+                annotations.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
     let http_port_name = if enable_mtls { "https" } else { "http" }.to_string();
 
     let ports = match node.spec.node_type {
@@ -864,6 +910,11 @@ fn build_service(node: &StellarNode, enable_mtls: bool) -> Service {
                 name: Some(name),
                 namespace: node.namespace(),
                 labels: Some(labels.clone()),
+                annotations: if annotations.is_empty() {
+                    None
+                } else {
+                    Some(annotations)
+                },
                 owner_references: Some(vec![owner_reference(node)]),
                 ..Default::default()
             },
@@ -1233,6 +1284,28 @@ fn build_ingress(node: &StellarNode, config: &IngressConfig) -> Ingress {
         );
     }
 
+    if let Some(dns_config) = &config.external_dns {
+        annotations.insert(
+            "external-dns.alpha.kubernetes.io/hostname".to_string(),
+            dns_config.hostname.clone(),
+        );
+        annotations.insert(
+            "external-dns.alpha.kubernetes.io/ttl".to_string(),
+            dns_config.ttl.to_string(),
+        );
+        if let Some(provider) = &dns_config.provider {
+            annotations.insert(
+                "external-dns.alpha.kubernetes.io/provider".to_string(),
+                provider.clone(),
+            );
+        }
+        if let Some(extra_annotations) = &dns_config.annotations {
+            for (k, v) in extra_annotations {
+                annotations.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
     let rules: Vec<IngressRule> = config
         .hosts
         .iter()
@@ -1267,8 +1340,6 @@ fn build_ingress(node: &StellarNode, config: &IngressConfig) -> Ingress {
             secret_name: Some(secret.clone()),
         }]
     });
-
-    let annotations = node.spec.storage.annotations.clone().unwrap_or_default();
 
     Ingress {
         metadata: merge_resource_meta(
