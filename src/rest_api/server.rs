@@ -21,6 +21,8 @@ use crate::controller::ControllerState;
 use crate::{Error, Result};
 
 use super::auth;
+use super::job_handlers;
+use super::audit_handlers;
 use super::custom_metrics;
 use super::dashboard_handlers;
 use super::handlers;
@@ -103,6 +105,8 @@ pub async fn run_server(
                 .post(handlers::set_log_level)
                 .route_layer(middleware::from_fn_with_state(state.clone(), auth::k8s_rbac_auth)),
         )
+        // Compliance report (OIDC-protected when OIDC is configured)
+        .route("/api/v1/compliance/report", get(handlers::compliance_report))
         // Dashboard routes
         .route("/", get(dashboard_ui))
         .route("/api/v1/dashboard/overview", get(dashboard_handlers::dashboard_overview))
@@ -110,8 +114,16 @@ pub async fn run_server(
         .route("/api/v1/dashboard/nodes/:namespace/:name/conditions", get(dashboard_handlers::get_node_conditions))
         .route("/api/v1/dashboard/nodes/:namespace/:name/metrics", get(dashboard_handlers::get_node_metrics))
         .route("/api/v1/dashboard/nodes/:namespace/:name/actions", axum::routing::post(dashboard_handlers::execute_node_action))
+        // Operator logs
+        .route("/api/v1/dashboard/operator/logs", get(dashboard_handlers::get_operator_logs))
         // Documentation search API
         .route("/api/v1/docs/search-index", get(handlers::get_search_index))
+        // Background job monitoring dashboard
+        .route("/api/v1/jobs", get(job_handlers::list_jobs))
+        .route("/api/v1/jobs/stats", get(job_handlers::job_stats))
+        // Audit log
+        .route("/api/v1/audit-log", get(audit_handlers::list_audit_log))
+        .route("/api/v1/audit-log/search", get(audit_handlers::search_audit_log))
         // Custom metrics API
         .route(
             "/apis/custom.metrics.k8s.io/v1beta2/namespaces/:namespace/pods/:name/:metric",

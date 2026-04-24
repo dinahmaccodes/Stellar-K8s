@@ -48,15 +48,24 @@
 //! - Cleans up associated resources (Services, ConfigMaps, etc.)
 //! - Removes finalizer only after successful cleanup
 
+pub mod benchmark;
 pub mod blue_green;
+pub mod cross_cloud_failover;
 pub mod feature_flags;
+pub mod jurisdiction;
 pub mod label_propagation;
 pub mod maintenance;
+pub mod network_isolation;
+pub mod predictive_scaling;
+pub mod pss;
 pub mod resource_meta;
 
 mod archive_health;
+pub mod background_jobs;
+pub mod db_pool;
 pub mod archive_prune;
 pub mod audit;
+pub mod audit_log;
 pub mod captive_core;
 pub mod conditions;
 pub mod cost;
@@ -97,20 +106,24 @@ mod resources;
 mod resources_test;
 pub mod service_mesh;
 mod snapshot;
+pub mod snapshot_worker;
 pub mod traffic;
 #[cfg(test)]
 mod traffic_test;
 pub mod vpa;
 mod vsl;
+pub mod webhook_delivery;
 
 pub use archive_health::{
     calculate_backoff, check_archive_integrity, check_history_archive_health, ArchiveHealthResult,
     ArchiveIntegrityResult, ARCHIVE_LAG_THRESHOLD,
 };
+pub use benchmark::run_benchmark_controller;
 pub use blue_green::{
     cleanup_blue_deployment, create_green_deployment, rollback_to_blue, run_smoke_tests,
     switch_traffic_to_green, wait_for_green_ready, BlueGreenConfig, BlueGreenStatus,
 };
+pub use cross_cloud_failover::reconcile_cross_cloud_failover;
 pub use cross_cluster::{check_peer_latency, ensure_cross_cluster_services, PeerLatencyStatus};
 pub use cve_reconciler::reconcile_cve_patches;
 pub use feature_flags::{
@@ -118,16 +131,35 @@ pub use feature_flags::{
 };
 pub use finalizers::STELLAR_NODE_FINALIZER;
 pub use health::{check_node_health, HealthCheckResult};
+pub use jurisdiction::{
+    build_jurisdiction_node_affinity, compliance_report, merge_jurisdiction_tolerations,
+    ComplianceReportEntry,
+};
+pub use network_isolation::{
+    check_network_safety, network_label_value, same_network_namespace_selector,
+    NetworkSafetyViolation, NAMESPACE_NETWORK_LABEL, NODE_NETWORK_LABEL,
+};
 pub use operator_config::{hardcoded_defaults, OperatorConfig};
 pub use peer_discovery::{
     get_peers_from_config_map, trigger_peer_config_reload, PeerDiscoveryConfig,
     PeerDiscoveryManager, PeerInfo,
 };
+pub use pss::{
+    ensure_namespace_pss_labels, restricted_container_security_context,
+    restricted_pod_security_context, validate_pss_compliance, PssViolation,
+};
 #[cfg(feature = "reconciler-fuzz")]
+pub use background_jobs::{JobKind, JobRecord, JobRegistry, JobState, MAX_JOBS};
+pub use db_pool::{create_pool, DbPoolConfig, DEFAULT_CONNECTION_TIMEOUT_SECS, DEFAULT_MAX_CONNECTIONS};
 pub use reconciler::reconcile_for_fuzz;
-pub use reconciler::{run_controller, ControllerState};
+pub use reconciler::{run_controller, BatchSummaryReport, ControllerState};
 pub use remediation::{can_remediate, check_stale_node, RemediationLevel, StaleCheckResult};
 pub use service_mesh::{
     delete_service_mesh_resources, ensure_destination_rule, ensure_peer_authentication,
     ensure_request_authentication, ensure_virtual_service,
 };
+pub use webhook_delivery::{
+    DeliveryRecord, WebhookDeliveryService, WebhookEndpoint, WebhookEvent, WebhookEventType,
+};
+pub use audit_log::{AdminAction, AuditEntry, AuditLog};
+pub use snapshot_worker::run_snapshot_worker;

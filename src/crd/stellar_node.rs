@@ -14,9 +14,9 @@ use super::types::{
     DisasterRecoveryStatus, ExternalDatabaseConfig, ForensicSnapshotConfig, GlobalDiscoveryConfig,
     HistoryMode, HorizonConfig, IngressConfig, LabelPropagationConfig, LoadBalancerConfig,
     ManagedDatabaseConfig, NetworkPolicyConfig, NodeType, OciSnapshotConfig, PlacementConfig,
-    PodAntiAffinityStrength, ResourceRequirements, RestoreFromSnapshotConfig, RetentionPolicy,
-    RolloutStrategy, SnapshotScheduleConfig, SorobanConfig, StellarNetwork, StorageConfig,
-    ValidatorConfig, VpaConfig,
+    PodAntiAffinityStrength, ProbeConfig, ResourceRequirements, RestoreFromSnapshotConfig,
+    RetentionPolicy, RolloutStrategy, SnapshotScheduleConfig, SorobanConfig, StellarNetwork,
+    StorageConfig, ValidatorConfig, VpaConfig,
 };
 
 /// Structured validation error for `StellarNodeSpec`
@@ -136,6 +136,10 @@ pub struct StellarNodeSpec {
     #[serde(default)]
     pub maintenance_mode: bool,
 
+    /// Optimize pod placement based on network latency to quorum peers
+    #[serde(default)]
+    pub proximity_aware: bool,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network_policy: Option<NetworkPolicyConfig>,
 
@@ -243,6 +247,42 @@ pub struct StellarNodeSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<Vec<serde_json::Value>>")]
     pub sidecars: Option<Vec<k8s_openapi::api::core::v1::Container>>,
+
+    /// Optional overrides for the liveness, readiness, and startup probes on the main container.
+    ///
+    /// When set, the specified fields replace the operator's built-in probe defaults.
+    /// Unset fields continue to use the operator defaults.
+    ///
+    /// # Example
+    /// ```yaml
+    /// probes:
+    ///   liveness:
+    ///     initialDelaySeconds: 60
+    ///     periodSeconds: 15
+    ///     failureThreshold: 5
+    ///   readiness:
+    ///     initialDelaySeconds: 20
+    ///     periodSeconds: 10
+    /// ```
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probes: Option<ProbeConfig>,
+    /// Cross-cloud failover configuration for Horizon clusters.
+    /// Enables seamless traffic failover between cloud providers (AWS, GCP, Azure)
+    /// during major provider outages.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cross_cloud_failover: Option<crate::crd::CrossCloudFailoverConfig>,
+
+    /// Hitless upgrade configuration for zero-interruption Stellar Core upgrades.
+    ///
+    /// When enabled, the operator injects a handoff sidecar that transfers open
+    /// peer TCP socket file descriptors to the new container via `SCM_RIGHTS`,
+    /// avoiding peer re-discovery during version upgrades.
+    ///
+    /// Only applicable to `Validator` nodes.
+    ///
+    /// See `docs/hitless-upgrade.md` for the full design and feasibility study.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hitless_upgrade: Option<super::types::HitlessUpgradeConfig>,
 }
 
 fn default_replicas() -> i32 {
@@ -296,6 +336,9 @@ impl Default for StellarNodeSpec {
             custom_network_passphrase: None,
             sidecars: None,
             cert_manager: None,
+            probes: None,
+            cross_cloud_failover: None,
+            hitless_upgrade: None,
         }
     }
 }
@@ -372,6 +415,40 @@ impl StellarNodeSpec {
                      "LocalStorage mode requires either a specific storage_class or node_affinity to be set",
                      "Provide a node_affinity definition to pin the volume, or provide a Local StorageClass name.",
                  ));
+            }
+        }
+
+        // 2b. snapshotRef validation (applies to all node types)
+        if let Some(ref snap_ref) = self.storage.snapshot_ref {
+            let has_csi = snap_ref.volume_snapshot_name.is_some();
+            let has_backup = snap_ref.backup_url.is_some();
+
+            if has_csi && has_backup {
+                errors.push(SpecValidationError::new(
+                    "spec.storage.snapshotRef",
+                    "snapshotRef cannot specify both volumeSnapshotName and backupUrl simultaneously",
+                    "Use either volumeSnapshotName (CSI VolumeSnapshot) or backupUrl (compressed archive), not both.",
+                ));
+            }
+            if !has_csi && !has_backup {
+                errors.push(SpecValidationError::new(
+                    "spec.storage.snapshotRef",
+                    "snapshotRef must specify either volumeSnapshotName or backupUrl",
+                    "Set spec.storage.snapshotRef.volumeSnapshotName for CSI snapshot restore, or spec.storage.snapshotRef.backupUrl for compressed backup restore.",
+                ));
+            }
+            if has_backup
+                && snap_ref
+                    .backup_url
+                    .as_deref()
+                    .map(|u| u.is_empty())
+                    .unwrap_or(false)
+            {
+                errors.push(SpecValidationError::new(
+                    "spec.storage.snapshotRef.backupUrl",
+                    "backupUrl must not be empty when set",
+                    "Provide a valid S3 or HTTPS URL for the compressed backup archive.",
+                ));
             }
         }
 
@@ -598,6 +675,17 @@ impl StellarNodeSpec {
                         "Provide a Secret reference containing 'username' and 'password' keys for the TURN server.",
                     ));
                 }
+            }
+        }
+
+        // 5. Probe override validation
+        if let Some(ref probe_config) = self.probes {
+            for msg in probe_config.validate() {
+                errors.push(SpecValidationError::new(
+                    "spec.probes",
+                    msg,
+                    "Ensure all probe fields are positive integers (initialDelaySeconds >= 0, others >= 1).",
+                ));
             }
         }
 
@@ -1066,6 +1154,18 @@ pub struct StellarNodeStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub canary_start_time: Option<String>,
 
+    /// Current traffic weight routed to the canary (0–100)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canary_weight: Option<i32>,
+
+    /// Observed 4xx/5xx error rate on the canary in the last analysis window (0.0–1.0)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canary_error_rate: Option<f64>,
+
+    /// Number of consecutive successful health checks for the current canary
+    #[serde(default)]
+    pub canary_consecutive_healthy: i32,
+
     /// Version of the database schema after last successful migration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_migrated_version: Option<String>,
@@ -1091,6 +1191,14 @@ pub struct StellarNodeStatus {
     /// One of: "Synced", "Partial", "Failed"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label_propagation_status: Option<String>,
+
+    /// Bootstrap status when the node was started from a snapshot or compressed backup.
+    /// Tracks the restore phase and time-to-sync for observability.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_bootstrap: Option<SnapshotBootstrapStatus>,
+    /// Cross-cloud failover status (Horizon/SorobanRpc nodes only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cross_cloud_failover_status: Option<crate::crd::CrossCloudFailoverStatus>,
 }
 
 /// BGP advertisement status information
@@ -1110,6 +1218,44 @@ pub struct BGPStatus {
     /// Last BGP update time
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_update: Option<String>,
+}
+
+/// Status of a snapshot-based bootstrap operation.
+///
+/// Populated when `spec.storage.snapshotRef` or `spec.restoreFromSnapshot` is set.
+/// Tracks the restore phase and time-to-sync so operators can verify the
+/// "synced within 10 minutes" acceptance criterion.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotBootstrapStatus {
+    /// Current phase of the bootstrap operation.
+    /// One of: `Pending`, `Restoring`, `Restored`, `Syncing`, `Synced`, `Failed`
+    pub phase: String,
+
+    /// Source used for bootstrap (VolumeSnapshot name or backup URL).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+
+    /// RFC3339 timestamp when the restore init container started.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restore_started_at: Option<String>,
+
+    /// RFC3339 timestamp when the restore init container completed successfully.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restore_completed_at: Option<String>,
+
+    /// RFC3339 timestamp when the node first reached `Synced` state after bootstrap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synced_at: Option<String>,
+
+    /// Elapsed seconds from restore completion to first `Synced` state.
+    /// A value ≤ 600 satisfies the "synced within 10 minutes" acceptance criterion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seconds_to_sync: Option<u64>,
+
+    /// Human-readable message about the current bootstrap state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 impl StellarNodeStatus {
@@ -1272,6 +1418,7 @@ mod tests {
                 canary: Some(CanaryConfig {
                     weight: 10,
                     check_interval_seconds: 300,
+                    ..Default::default()
                 }),
             },
             ..Default::default()
@@ -1298,6 +1445,7 @@ mod tests {
                 canary: Some(CanaryConfig {
                     weight: 20,
                     check_interval_seconds: 300,
+                    ..Default::default()
                 }),
             },
             ..Default::default()

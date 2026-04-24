@@ -1,5 +1,8 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck source=lib/repo.sh
+source "$(dirname "$0")/lib/repo.sh"
 
 # Stellar-K8s Wave Issue Creation Script - BATCH 3 (High Complexity)
 # Issues #22 - #24
@@ -7,7 +10,7 @@ set -e
 echo "Creating Batch 3 (200 points) issues..."
 
 # 22. Automated PVC Snapshots/Backups (High - 200 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement Automated PVC Snapshots/Backups for StellarNode" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -22,10 +25,11 @@ Stellar nodes store critical data in PVCs. To ensure disaster recovery, the oper
 ### 📚 Resources
 - [Kubernetes Volume Snapshots](https://kubernetes.io/docs/concepts/storage/volume-snapshots/)
 - [Stellar Core Data Management](https://developers.stellar.org/docs/run-core-node/prerequisites#storage)
+- [\`src/controller/resources.rs\`](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/controller/resources.rs)
 " --label "stellar-wave,reliability,architecture"
 
 # 23. ServiceMonitor & HPA for Horizon (High - 200 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement ServiceMonitor & HPA for Horizon Auto-Scaling" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -40,10 +44,11 @@ Horizon nodes often experience variable traffic. The operator should support Hor
 ### 📚 Resources
 - [Horizontal Pod Autoscaling](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
 - [Prometheus Operator: ServiceMonitor](https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/user-guides/getting-started.md)
+- [\`src/controller/metrics.rs\`](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/controller/metrics.rs)
 " --label "stellar-wave,observability,kubernetes"
 
 # 24. Ingress & Cert-Manager Integration (High - 200 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement Ingress & Cert-Manager Integration for Public APIs" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -58,6 +63,7 @@ Exposing Horizon or Soroban RPC to the internet requires secure TLS termination 
 ### 📚 Resources
 - [Kubernetes Ingress](https://kubernetes.io/docs/concepts/services-networking/ingress/)
 - [Cert-Manager Documentation](https://cert-manager.io/docs/usage/ingress/)
+- [\`src/controller/resources.rs\`](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/controller/resources.rs)
 " --label "stellar-wave,kubernetes,architecture"
 
 echo "Done! Batch 3 issues created (#22-#24)."

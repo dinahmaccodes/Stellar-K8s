@@ -1,32 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="OtowoOrg/Stellar-K8s"
+# shellcheck source=lib/repo.sh
+# shellcheck source=lib/common.sh
+source "$(dirname "$0")/lib/repo.sh"
+source "$(dirname "$0")/lib/common.sh"
 
 echo "Resuming Batch 9 (final 3 issues)..."
-
-function create_issue_with_retry() {
-  local title="$1"
-  local label="$2"
-  local body="$3"
-  
-  local max_retries=10
-  local count=0
-  
-  while [ $count -lt $max_retries ]; do
-    if gh issue create --repo "$REPO" --title "$title" --label "$label" --body "$body"; then
-      echo "✓ Issue created: $title"
-      return 0
-    else
-      count=$((count + 1))
-      echo "API failed, retrying ($count/$max_retries) in 15 seconds..."
-      sleep 15
-    fi
-  done
-  
-  echo "Failed to create issue after $max_retries attempts: $title"
-  exit 1
-}
 
 # ─── ISSUE 5 ───────────────────────────────────────────────────────────────────
 create_issue_with_retry \
@@ -94,3 +74,5 @@ To make Stellar-K8s discoverable and easily installable on enterprise Kubernetes
 
 echo ""
 echo "🎉 All final 3 Batch 9 (200 pts) issues created!"
+
+print_skip_summary

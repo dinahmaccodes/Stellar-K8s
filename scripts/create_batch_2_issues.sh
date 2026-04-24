@@ -1,5 +1,8 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck source=lib/repo.sh
+source "$(dirname "$0")/lib/repo.sh"
 
 # Stellar-K8s Wave Issue Creation Script - BATCH 2
 # Issues #12 - #21
@@ -7,7 +10,7 @@ set -e
 echo "Creating Batch 2 of Stellar Wave issues..."
 
 # 12. Add Resource Limit validation (Trivial - 100 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Add Resource Limit validation (CPU/Memory)" \
   --body "### 🟢 Difficulty: Trivial (100 Points)
 
@@ -20,11 +23,11 @@ Currently, the operator allows setting CPU/Memory requests and limits without va
 
 ### 📚 Resources
 - [Kubernetes Resource Management](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
-- [Stellar-K8s Validation Example](https://github.com/stellar/stellar-k8s/blob/main/src/crd/stellar_node.rs)
+- [Stellar-K8s Validation Example](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/crd/stellar_node.rs)
 " --label "stellar-wave,good-first-issue,kubernetes"
 
 # 13. Implement validate() for NodePort range (Trivial - 100 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement validation for custom NodePort range" \
   --body "### 🟢 Difficulty: Trivial (100 Points)
 
@@ -36,10 +39,11 @@ When a user specifies a NodePort in the service config, we should validate that 
 
 ### 📚 Resources
 - [Kubernetes Service NodePort](https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport)
+- [\`src/crd/stellar_node.rs\`](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/crd/stellar_node.rs)
 " --label "stellar-wave,good-first-issue,kubernetes"
 
 # 14. Add topologySpreadConstraints support (Trivial - 100 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Add topologySpreadConstraints support to Pod template" \
   --body "### 🟢 Difficulty: Trivial (100 Points)
 
@@ -51,10 +55,11 @@ To ensure high availability, users should be able to specify \`topologySpreadCon
 
 ### 📚 Resources
 - [Kubernetes Pod Topology Spread Constraints](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/)
+- [\`src/controller/resources.rs\`](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/controller/resources.rs)
 " --label "stellar-wave,kubernetes,feature"
 
 # 15. Implement standard Kubernetes Conditions in Status (Medium - 150 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement standard Kubernetes Conditions in Status" \
   --body "### 🟡 Difficulty: Medium (150 Points)
 
@@ -71,7 +76,7 @@ Instead of a single \`Phase\` string, the operator should use the standard Kuber
 " --label "stellar-wave,architecture,logic"
 
 # 16. Add support for Sidecar containers (Medium - 150 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Add support for Sidecar containers in StellarNode" \
   --body "### 🟡 Difficulty: Medium (150 Points)
 
@@ -84,10 +89,11 @@ Users may need to run sidecar containers (like log forwarders, monitoring agents
 
 ### 📚 Resources
 - [Kubernetes Sidecar Containers](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/)
+- [\`src/controller/resources.rs\`](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/controller/resources.rs)
 " --label "stellar-wave,kubernetes,feature"
 
 # 17. Implement 'Maintenance Mode' flag (Medium - 150 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement 'Maintenance Mode' flag" \
   --body "### 🟡 Difficulty: Medium (150 Points)
 
@@ -99,10 +105,11 @@ When performing manual operations on a node, it’s useful to have a 'Maintenanc
 
 ### 📚 Resources
 - [Kubernetes Operator Lifecycle](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
+- [\`src/controller/reconciler.rs\`](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/controller/reconciler.rs)
 " --label "stellar-wave,logic,feature"
 
 # 18. Add Prometheus Rule generation (Medium - 150 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Add Prometheus Rule generation for Alerting" \
   --body "### 🟡 Difficulty: Medium (150 Points)
 
@@ -114,10 +121,11 @@ The operator should optionally generate a \`PrometheusRule\` custom resource (if
 
 ### 📚 Resources
 - [Prometheus Operator: Monitoring Mixins](https://github.com/prometheus-operator/kube-prometheus/tree/main/jsonnet/kube-prometheus/rules)
+- [\`src/controller/metrics.rs\`](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/controller/metrics.rs)
 " --label "stellar-wave,observability,feature"
 
 # 19. Implement 'Auto-Sync Health' check for Horizon (High - 200 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement 'Auto-Sync Health' check for Horizon" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -131,10 +139,11 @@ Horizon nodes can take time to ingest and catch up. The operator should query th
 ### 📚 Resources
 - [Horizon API Reference](https://developers.stellar.org/docs/data-availability/horizon/api-reference)
 - [kube-rs Health Checks](https://kube.rs/)
+- [\`src/controller/reconciler.rs\`](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/controller/reconciler.rs)
 " --label "stellar-wave,reliability,rust"
 
 # 20. Support for External Postgres Databases (High - 200 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Support for External Postgres Databases" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -148,10 +157,11 @@ For production, users often prefer managed databases (RDS, Cloud SQL, CockroachD
 ### 📚 Resources
 - [Stellar Core Database Config](https://github.com/stellar/stellar-core/blob/master/docs/software/admin.md#database)
 - [Kubernetes Secrets](https://kubernetes.io/docs/concepts/configuration/secret/)
+- [\`src/crd/stellar_node.rs\`](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/crd/stellar_node.rs)
 " --label "stellar-wave,architecture,feature"
 
 # 21. Implement Automated Database Migrations for Horizon (High - 200 Points)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement Automated Database Migrations for Horizon" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -165,6 +175,7 @@ When upgrading Horizon, the database schema often needs a migration. The operato
 ### 📚 Resources
 - [Horizon DB Management](https://developers.stellar.org/docs/data-availability/horizon/admin#database-management)
 - [Kubernetes Init Containers](https://kubernetes.io/docs/concepts/workloads/pods/init-containers/)
+- [\`src/controller/resources.rs\`](https://github.com/OtowoOrg/Stellar-K8s/blob/main/src/controller/resources.rs)
 " --label "stellar-wave,reliability,automation"
 
 echo "Done! Batch 2 issues created (12-21)."

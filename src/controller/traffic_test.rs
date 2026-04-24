@@ -60,6 +60,8 @@ mod tests {
             horizon_config: None,
             soroban_config: None,
             nat_traversal: None,
+            cross_cloud_failover: None,
+            hitless_upgrade: None,
         }
     }
 
@@ -129,6 +131,8 @@ mod tests {
             cert_manager: None,
                 custom_network_passphrase: None,
                 nat_traversal: None,
+                cross_cloud_failover: None,
+                hitless_upgrade: None,
             },
             status: None,
         }
@@ -190,7 +194,9 @@ mod tests {
                 sidecars: None,
             cert_manager: None,
                 custom_network_passphrase: None,
-            nat_traversal: None,
+                nat_traversal: None,
+                cross_cloud_failover: None,
+                hitless_upgrade: None,
             },
             status: None,
         }

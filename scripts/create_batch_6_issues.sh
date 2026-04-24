@@ -1,10 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck source=lib/repo.sh
+source "$(dirname "$0")/lib/repo.sh"
+
 # Stellar-K8s Wave Issue Creation Script - BATCH 6
 # 10 Elite Engineering Issues (200 pts each)
 
 # Helper to create label if not exists
 create_label() {
-  gh label create "$1" --color "$2" --description "$3" || true
+  gh label create --repo "$REPO" "$1" --color "$2" --description "$3" || true
 }
 
 echo "Ensuring labels exist..."
@@ -19,7 +24,7 @@ create_label "automation" "ffb3b3" "Automated workflows"
 echo "Creating Batch 6 (Elite) issues..."
 
 # 1. Cross-Region Multi-Cluster Disaster Recovery (High - 200 pts)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement Cross-Region Multi-Cluster Disaster Recovery" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -36,7 +41,7 @@ Standard backups are not enough. This task involves building a controller that m
 " --label "stellar-wave,architecture,reliability" || echo "Failed issue 1"
 
 # 2. MetalLB/BGP Anycast for Node Discovery (High - 200 pts)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Integrate MetalLB/BGP Anycast for Global Node Discovery" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -53,7 +58,7 @@ To make Stellar nodes truly resilient, we should announce node IPs via BGP Anyca
 " --label "stellar-wave,kubernetes,reliability" || echo "Failed issue 2"
 
 # 3. CloudNativePG (Postgres Operator) Integration (High - 200 pts)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Automate High-Availability DBs via CloudNativePG Integration" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -69,7 +74,7 @@ Currently, DB management is manual or basic. This task involves integrating the 
 " --label "stellar-wave,architecture,automation" || echo "Failed issue 3"
 
 # 4. Hardware Security Module (HSM) Native Support (High - 200 pts)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement Native Hardware Security Module (HSM) Support" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -85,7 +90,7 @@ Validators require the highest level of key security. This task implements nativ
 " --label "stellar-wave,security,architecture" || echo "Failed issue 4"
 
 # 5. Automated Performance Regression Testing (High - 200 pts)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement Automated Performance Regression Test Suite" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -101,7 +106,7 @@ As the operator grows, performance can degrade. Implement an automated benchmark
 " --label "stellar-wave,performance,testing" || echo "Failed issue 5"
 
 # 6. Wasm-based Validating Admission Webhook (High - 200 pts)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement Wasm-powered Validating Admission Webhook" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -117,7 +122,7 @@ Standard validation is static. Implement a webhook that allows users to provide 
 " --label "stellar-wave,architecture,rust" || echo "Failed issue 6"
 
 # 7. Zero-Knowledge Telemetry Proxy (High - 200 pts)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement Zero-Knowledge Telemetry Proxy" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -133,7 +138,7 @@ Nodes need to report health, but privacy is key. Implement a proxy that scrubs s
 " --label "stellar-wave,security,observability" || echo "Failed issue 7"
 
 # 8. Automated Rolling Security Patching logic (High - 200 pts)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement Automated Rolling Security Patching" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -149,7 +154,7 @@ When CVEs are found in standard images, the operator should automatically trigge
 " --label "stellar-wave,security,automation" || echo "Failed issue 8"
 
 # 9. Stellar Core Horizontal 'Read-Only' Scaling (High - 200 pts)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement Horizontal Scaling for Read-Only Nodes" \
   --body "### 🔴 Difficulty: High (200 Points)
 
@@ -165,7 +170,7 @@ While validators are sensitive, read-only nodes can be scaled horizontally. Impl
 " --label "stellar-wave,architecture,performance" || echo "Failed issue 9"
 
 # 10. Custom Scheduler for Data Proximity (High - 200 pts)
-gh issue create \
+gh issue create --repo "$REPO" \
   --title "Implement Custom Scheduler for Data/Peer Proximity" \
   --body "### 🔴 Difficulty: High (200 Points)
 

@@ -74,6 +74,8 @@ mod tests {
             soroban_config: None,
             nat_traversal: None,
             custom_network_passphrase: None,
+            cross_cloud_failover: None,
+            hitless_upgrade: None,
         }
     }
 
@@ -313,9 +315,9 @@ mod tests {
     // -----------------------------------------------------------------------
 
     use crate::controller::resources::{
-        build_config_map_for_test, build_deployment_for_test, build_pvc_for_test,
-        build_service_for_test, build_statefulset_for_test, merge_workload_affinity,
-        owner_reference, standard_labels,
+        build_config_map_for_test, build_deployment_for_test, build_network_policy,
+        build_pvc_for_test, build_service_for_test, build_statefulset_for_test,
+        merge_workload_affinity, owner_reference, standard_labels,
     };
     use crate::crd::types::ValidatorConfig;
     use crate::crd::StellarNode;
@@ -751,4 +753,166 @@ peer-2 = "G..."
             "sidecar must be appended after the main container"
         );
     }
+    #[test]
+    fn test_network_policy_stellar_native_egress() {
+        let mut node = make_node(NodeType::Validator);
+        let mut vc = ValidatorConfig::default();
+        vc.known_peers = Some(r#"["1.2.3.4:11625", "example.com:11625"]"#.to_string());
+        vc.quorum_set = Some(
+            r#"[VALIDATORS]
+"5.6.7.8" = "G..."
+"G..." = "G..."
+"#
+            .to_string(),
+        );
+        node.spec.validator_config = Some(vc);
+
+        let config = crate::crd::types::NetworkPolicyConfig {
+            enabled: true,
+            ..Default::default()
+        };
+
+        let netpol = build_network_policy(&node, &config);
+        let spec = netpol.spec.expect("spec must be present");
+
+        assert!(spec
+            .policy_types
+            .as_ref()
+            .unwrap()
+            .contains(&"Ingress".to_string()));
+        assert!(spec
+            .policy_types
+            .as_ref()
+            .unwrap()
+            .contains(&"Egress".to_string()));
+
+        let egress = spec.egress.expect("egress rules must be present");
+
+        // 1. DNS egress
+        let has_dns = egress.iter().any(|rule| {
+            rule.ports.as_ref().map_or(false, |ports| {
+                ports.iter().any(|p| {
+                    p.port.as_ref().map_or(false, |v| {
+                        v == &k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::Int(53)
+                    })
+                })
+            })
+        });
+        assert!(has_dns, "must have DNS egress rule");
+
+        // 2. Peer egress
+        let has_peers = egress.iter().any(|rule| {
+            rule.to.as_ref().map_or(false, |to| {
+                to.iter().any(|p| {
+                    p.ip_block.as_ref().map_or(false, |ip| {
+                        ip.cidr == "1.2.3.4/32" || ip.cidr == "5.6.7.8/32"
+                    })
+                })
+            })
+        });
+        assert!(
+            has_peers,
+            "must have peer egress rule for IPs 1.2.3.4 and 5.6.7.8"
+        );
+    }
+}
+
+// -----------------------------------------------------------------------
+// apply_probe_override — #510 customizable probes
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_probe_override_none_returns_none_when_no_base() {
+    let result = crate::controller::resources::apply_probe_override_pub(None, None);
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_probe_override_returns_base_when_no_override() {
+    use k8s_openapi::api::core::v1::Probe;
+    let base = Probe {
+        period_seconds: Some(10),
+        ..Default::default()
+    };
+    let result = crate::controller::resources::apply_probe_override_pub(Some(base.clone()), None);
+    assert_eq!(result, Some(base));
+}
+
+#[test]
+fn test_probe_override_applies_all_fields() {
+    use crate::crd::types::ProbeOverride;
+    let cfg = ProbeOverride {
+        initial_delay_seconds: Some(30),
+        period_seconds: Some(15),
+        timeout_seconds: Some(5),
+        success_threshold: Some(1),
+        failure_threshold: Some(6),
+    };
+    let result = crate::controller::resources::apply_probe_override_pub(None, Some(&cfg));
+    let probe = result.expect("should produce a probe");
+    assert_eq!(probe.initial_delay_seconds, Some(30));
+    assert_eq!(probe.period_seconds, Some(15));
+    assert_eq!(probe.timeout_seconds, Some(5));
+    assert_eq!(probe.success_threshold, Some(1));
+    assert_eq!(probe.failure_threshold, Some(6));
+}
+
+#[test]
+fn test_probe_override_merges_onto_base() {
+    use crate::crd::types::ProbeOverride;
+    use k8s_openapi::api::core::v1::Probe;
+    let base = Probe {
+        period_seconds: Some(10),
+        failure_threshold: Some(3),
+        ..Default::default()
+    };
+    let cfg = ProbeOverride {
+        failure_threshold: Some(10),
+        ..Default::default()
+    };
+    let result = crate::controller::resources::apply_probe_override_pub(Some(base), Some(&cfg));
+    let probe = result.expect("should produce a probe");
+    assert_eq!(
+        probe.period_seconds,
+        Some(10),
+        "base period_seconds preserved"
+    );
+    assert_eq!(
+        probe.failure_threshold,
+        Some(10),
+        "override failure_threshold applied"
+    );
+}
+
+#[test]
+fn test_probe_config_validation_rejects_zero_period() {
+    use crate::crd::types::{ProbeConfig, ProbeOverride};
+    let cfg = ProbeConfig {
+        liveness: Some(ProbeOverride {
+            period_seconds: Some(0),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let errs = cfg.validate();
+    assert!(
+        !errs.is_empty(),
+        "zero periodSeconds should fail validation"
+    );
+    assert!(errs[0].contains("periodSeconds"));
+}
+
+#[test]
+fn test_probe_config_validation_accepts_valid_config() {
+    use crate::crd::types::{ProbeConfig, ProbeOverride};
+    let cfg = ProbeConfig {
+        liveness: Some(ProbeOverride {
+            initial_delay_seconds: Some(0),
+            period_seconds: Some(10),
+            failure_threshold: Some(3),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    assert!(cfg.validate().is_empty());
 }

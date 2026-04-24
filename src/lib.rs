@@ -1,4 +1,4 @@
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 //! Stellar-K8s: Cloud-Native Kubernetes Operator for Stellar Infrastructure
 //!
 //! This crate provides a Kubernetes operator for managing Stellar Core,
@@ -60,6 +60,7 @@
 //! ```
 
 pub mod backup;
+pub mod byzantine;
 pub mod carbon_aware;
 pub mod controller;
 pub mod crd;

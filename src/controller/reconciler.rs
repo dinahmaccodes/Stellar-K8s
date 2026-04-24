@@ -43,7 +43,7 @@ use tracing::{debug, error, info, info_span, instrument, warn};
 use tracing_subscriber::{reload::Handle, EnvFilter, Registry};
 
 use crate::crd::{
-    Condition, DisasterRecoveryStatus, NodeType, RolloutStrategy, SpecValidationError, StellarNode,
+    Condition, DisasterRecoveryStatus, NodeType, SpecValidationError, StellarNode,
     StellarNodeStatus,
 };
 use crate::error::{Error, Result};
@@ -55,6 +55,7 @@ use super::archive_health::{
     ARCHIVE_LAG_THRESHOLD,
 };
 use super::conditions;
+use super::cross_cloud_failover;
 use super::cve_reconciler;
 use super::dr;
 use super::dr_drill;
@@ -62,12 +63,14 @@ use super::finalizers::STELLAR_NODE_FINALIZER;
 use super::health;
 use super::kms_secret;
 use super::label_propagation::LabelPropagator;
+use super::maintenance;
 #[cfg(feature = "metrics")]
 use super::metrics;
 use super::mtls;
 use super::oci_snapshot;
 use super::operator_config::{hardcoded_defaults, OperatorConfig};
 use super::peer_discovery;
+use super::pss;
 use super::remediation;
 use super::resources;
 use super::service_mesh;
@@ -77,6 +80,103 @@ use super::vsl;
 // Constants
 #[allow(dead_code)]
 const ARCHIVE_RETRIES_ANNOTATION: &str = "stellar.org/archive-health-retries";
+
+/// Summary report for a batch of reconciliation results.
+///
+/// Tracks the number of successful and failed reconciliations
+/// within a reporting window and provides a formatted summary log.
+#[derive(Debug, Default)]
+pub struct BatchSummaryReport {
+    /// Number of successful reconciliations in this batch
+    pub successes: u64,
+    /// Number of failed reconciliations in this batch
+    pub failures: u64,
+    /// Names of successfully reconciled objects in this batch
+    pub reconciled_objects: Vec<String>,
+    /// Failure details: (object name, error description)
+    pub failure_details: Vec<(String, String)>,
+    /// Total events seen (successes + failures)
+    pub total: u64,
+    /// Emit a summary every N events (batch window size)
+    batch_size: u64,
+}
+
+impl BatchSummaryReport {
+    /// Create a new report that emits a summary every `batch_size` events.
+    pub fn new(batch_size: u64) -> Self {
+        Self {
+            batch_size: batch_size.max(1),
+            ..Default::default()
+        }
+    }
+
+    /// Record a successful reconciliation.
+    pub fn record_success(&mut self, object_name: String) {
+        self.successes += 1;
+        self.total += 1;
+        self.reconciled_objects.push(object_name);
+        if self.total % self.batch_size == 0 {
+            self.emit_summary();
+        }
+    }
+
+    /// Record a failed reconciliation.
+    pub fn record_failure(&mut self, object_name: String, error: String) {
+        self.failures += 1;
+        self.total += 1;
+        self.failure_details.push((object_name, error));
+        if self.total % self.batch_size == 0 {
+            self.emit_summary();
+        }
+    }
+
+    /// Emit the end-of-batch summary log.
+    pub fn emit_summary(&self) {
+        info!(
+            total = self.total,
+            successes = self.successes,
+            failures = self.failures,
+            "=== Reconciliation batch summary ==="
+        );
+        if !self.reconciled_objects.is_empty() {
+            info!(
+                objects = ?self.reconciled_objects,
+                "Reconciled objects in this batch"
+            );
+        }
+        if !self.failure_details.is_empty() {
+            for (name, err) in &self.failure_details {
+                warn!(object = %name, error = %err, "Reconciliation failure in batch");
+            }
+        }
+    }
+
+    /// Emit a final summary regardless of batch window position.
+    /// Call this when the controller shuts down.
+    pub fn emit_final_summary(&self) {
+        if self.total == 0 {
+            info!("=== End-of-run summary: no reconciliation events processed ===");
+            return;
+        }
+        let success_rate = (self.successes as f64 / self.total as f64) * 100.0;
+        info!(
+            total = self.total,
+            successes = self.successes,
+            failures = self.failures,
+            success_rate_pct = format!("{:.1}", success_rate),
+            "=== End-of-run reconciliation summary ==="
+        );
+        if !self.failure_details.is_empty() {
+            warn!(
+                failure_count = self.failures,
+                "Failures encountered during this run:"
+            );
+            for (name, err) in &self.failure_details {
+                warn!(object = %name, error = %err, "  Failed reconciliation");
+            }
+        }
+    }
+}
 
 /// Shared state for the controller
 ///
@@ -92,6 +192,12 @@ pub struct ControllerState {
     pub watch_namespace: Option<String>,
     pub mtls_config: Option<crate::MtlsConfig>,
     pub dry_run: bool,
+    /// Requeue interval in seconds for retriable reconciliation errors.
+    pub retry_budget_retriable_secs: u64,
+    /// Requeue interval in seconds for non-retriable reconciliation errors.
+    pub retry_budget_nonretriable_secs: u64,
+    /// Maximum HTTP retry attempts for SCP and quorum queries.
+    pub retry_budget_max_attempts: u32,
     pub is_leader: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Identifies this operator when publishing Kubernetes Events via [`Recorder`].
     pub event_reporter: Reporter,
@@ -108,6 +214,14 @@ pub struct ControllerState {
         std::sync::Arc<tokio::sync::Mutex<Option<chrono::DateTime<chrono::Utc>>>>,
     /// Timestamp of the last event received from the K8s watch stream
     pub last_event_received: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// Background job registry for the monitoring dashboard.
+    pub job_registry: std::sync::Arc<super::background_jobs::JobRegistry>,
+    /// In-memory audit log for admin activity.
+    pub audit_log: std::sync::Arc<super::audit_log::AuditLog>,
+    /// Optional OIDC configuration for JWT-based authentication on the REST API.
+    /// When `Some`, the OIDC middleware is active; when `None`, the operator falls
+    /// back to Kubernetes RBAC token validation.
+    pub oidc_config: Option<crate::rest_api::OidcConfig>,
 }
 
 impl ControllerState {
@@ -155,6 +269,9 @@ impl ControllerState {
 ///         watch_namespace: None,
 ///         mtls_config: None,
 ///         dry_run: false,
+///         retry_budget_retriable_secs: 15,
+///         retry_budget_nonretriable_secs: 60,
+///         retry_budget_max_attempts: 3,
 ///         is_leader: Arc::new(AtomicBool::new(true)),
 ///         event_reporter: kube::runtime::events::Reporter {
 ///             controller: "stellar-operator".to_string(),
@@ -166,6 +283,7 @@ impl ControllerState {
 ///         log_reload_handle: reload_handle,
 ///         log_level_expires_at: Arc::new(tokio::sync::Mutex::new(None)),
 ///         last_event_received: Arc::new(AtomicU64::new(0)),
+///         oidc_config: None,
 ///     });
 ///     run_controller(state).await?;
 ///     Ok(())
@@ -182,7 +300,7 @@ pub async fn run_controller(state: Arc<ControllerState>) -> Result<()> {
     info!(
         "Starting StellarNode controller (mode: {})",
         if let Some(ns) = &state.watch_namespace {
-            format!("namespace-scoped: {}", ns)
+            format!("namespace-scoped: {ns}")
         } else {
             "cluster-scoped".to_string()
         }
@@ -201,6 +319,28 @@ pub async fn run_controller(state: Arc<ControllerState>) -> Result<()> {
             ));
         }
     }
+
+    // Start Node Drain Orchestrator in the background
+    let drain_orchestrator = Arc::new(maintenance::NodeDrainOrchestrator::new(
+        client.clone(),
+        state.event_reporter.clone(),
+    ));
+    tokio::spawn(async move {
+        if let Err(e) = drain_orchestrator.run().await {
+            error!("Node Drain Orchestrator stopped with error: {}", e);
+        }
+    });
+
+    // Start Quorum Optimizer in the background
+    let quorum_optimizer = Arc::new(quorum::QuorumOptimizer::new(
+        client.clone(),
+        state.event_reporter.clone(),
+    ));
+    tokio::spawn(async move {
+        if let Err(e) = quorum_optimizer.run().await {
+            error!("Quorum Optimizer stopped with error: {}", e);
+        }
+    });
 
     Controller::new(stellar_nodes, Config::default())
         // Watch owned resources for changes
@@ -246,20 +386,37 @@ pub async fn run_controller(state: Arc<ControllerState>) -> Result<()> {
         )
         .shutdown_on_signal()
         .run(reconcile, error_policy, state.clone())
-        .inspect({
+        .fold(BatchSummaryReport::new(50), {
             let state = state.clone();
-            move |_| {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                state
-                    .last_event_received
-                    .store(now, std::sync::atomic::Ordering::Relaxed);
+            move |mut report, res| {
+                let state = state.clone();
+                async move {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    state
+                        .last_event_received
+                        .store(now, std::sync::atomic::Ordering::Relaxed);
+
+                    match res {
+                        Ok(obj) => {
+                            let name = format!("{:?}", obj);
+                            info!("Reconciled: {:?}", obj);
+                            report.record_success(name);
+                        }
+                        Err(e) => {
+                            let err_str = format!("{:?}", e);
+                            error!("Reconcile error: {:?}", e);
+                            report.record_failure("unknown".to_string(), err_str);
+                        }
+                    }
+                    report
+                }
             }
         })
-        .for_each(|_res| async {})
-        .await;
+        .await
+        .emit_final_summary();
 
     Ok(())
 }
@@ -571,7 +728,37 @@ pub(crate) async fn apply_stellar_node(
         return Err(Error::ValidationError(message));
     }
 
+    // Network safety check — must run before any resources are created.
+    // Ensures no Mainnet node shares a namespace with a Testnet node (or vice versa).
+    if let Err(e) = super::network_isolation::check_network_safety(client, node).await {
+        let msg = e.to_string();
+        warn!(
+            "Network safety check failed for {}/{}: {}",
+            namespace, name, msg
+        );
+        emit_event(
+            client,
+            &ctx.event_reporter,
+            node,
+            kube::runtime::events::EventType::Warning,
+            "NetworkSafetyViolation",
+            "NetworkIsolation",
+            &msg,
+        )
+        .await?;
+        update_status(client, node, "Failed", Some(&msg), 0, true).await?;
+        return Err(e);
+    }
+
     let propagated_labels = LabelPropagator::new(node).compute();
+
+    // Enforce PSS 'restricted' on the managed namespace (idempotent)
+    if let Err(e) = pss::ensure_namespace_pss_labels(client, &namespace).await {
+        warn!(
+            "Failed to apply PSS labels to namespace '{}': {}. Continuing reconciliation.",
+            namespace, e
+        );
+    }
 
     // 1. Core infrastructure (PVC and ConfigMap) always managed by operator
     apply_or_emit(ctx, node, ActionType::Update, "PVC and ConfigMap", async {
@@ -1104,16 +1291,18 @@ pub(crate) async fn apply_stellar_node(
                         }
 
                         if is_canary_active {
-                            // 2. Monitor Canary: we are in the middle of a rollout
+                            // 2. Monitor Canary: manage both deployments and sync ingress weights
                             resources::ensure_canary_deployment(client, node, ctx.enable_mtls, ctx.dry_run).await?;
                             resources::ensure_canary_service(client, node, ctx.enable_mtls, ctx.dry_run).await?;
 
                             let mut stable_node = node.clone();
-                            // Recover the stable version from the existing deployment if possible
                             if let Some(cv) = &current_version {
                                 stable_node.spec.version = cv.clone();
                             }
                             resources::ensure_deployment(client, &stable_node, ctx.enable_mtls, &propagated_labels, ctx.dry_run).await?;
+
+                            // Sync ingress traffic weights (Nginx annotations + Istio VirtualService)
+                            resources::ensure_ingress(client, node, ctx.dry_run).await?;
 
                             // Check if the canary interval has elapsed
                             if let Some(status) = &node.status {
@@ -1123,66 +1312,120 @@ pub(crate) async fn apply_stellar_node(
                                         let elapsed_secs = now.signed_duration_since(start_time).num_seconds();
 
                                         if elapsed_secs >= cfg.check_interval_seconds as i64 {
-                                            // 3. Evaluate Canary: interval elapsed, check health
+                                            // 3. Evaluate: check pod health + HTTP error rate
                                             info!(
-                                                "Canary check interval elapsed ({} >= {}). Evaluating canary health.",
+                                                "Canary check interval elapsed ({} >= {}s). Evaluating.",
                                                 elapsed_secs, cfg.check_interval_seconds
                                             );
 
                                             let canary_health = check_canary_health(client, node).await?;
-
                                             let api: Api<StellarNode> = Api::namespaced(client.clone(), &namespace);
+
                                             if canary_health.healthy {
-                                                // 4a. Promote Canary
-                                                info!("Canary {}/{} is healthy. Promoting to stable.", namespace, name);
-                                                resources::ensure_deployment(client, node, ctx.enable_mtls, &propagated_labels, ctx.dry_run).await?;
-                                                resources::delete_canary_resources(client, node, ctx.dry_run).await?;
+                                                let consecutive = status.canary_consecutive_healthy + 1;
+                                                let current_weight = status.canary_weight.unwrap_or(cfg.weight);
+                                                let next_weight = if cfg.step_weight > 0 {
+                                                    (current_weight + cfg.step_weight).min(cfg.max_weight)
+                                                } else {
+                                                    current_weight
+                                                };
 
-                                                let patch = serde_json::json!({
-                                                    "status": {
-                                                        "canaryVersion": null,
-                                                        "canaryStartTime": null,
-                                                        "phase": "Running"
-                                                    }
-                                                });
-                                                api.patch_status(
-                                                    &name,
-                                                    &PatchParams::apply("stellar-operator"),
-                                                    &Patch::Merge(&patch),
-                                                ).await?;
+                                                if consecutive >= cfg.success_threshold
+                                                    && next_weight >= cfg.max_weight
+                                                {
+                                                    // 4a. Promote — enough healthy checks at max weight
+                                                    info!(
+                                                        "Canary {}/{} healthy ({}/{} checks). Promoting.",
+                                                        namespace, name, consecutive, cfg.success_threshold
+                                                    );
+                                                    resources::ensure_deployment(client, node, ctx.enable_mtls, &propagated_labels, ctx.dry_run).await?;
+                                                    resources::delete_canary_resources(client, node, ctx.dry_run).await?;
+
+                                                    let recorder = recorder_for(client, &ctx.event_reporter, node);
+                                                    let _ = publish_object_event(
+                                                        &recorder,
+                                                        EventType::Normal,
+                                                        "CanaryPromoted",
+                                                        "Canary",
+                                                        &format!(
+                                                            "Canary version {} promoted to stable after {} healthy checks",
+                                                            node.spec.version, consecutive
+                                                        ),
+                                                    ).await;
+
+                                                    let patch = serde_json::json!({
+                                                        "status": {
+                                                            "canaryVersion": null,
+                                                            "canaryStartTime": null,
+                                                            "canaryWeight": null,
+                                                            "canaryErrorRate": null,
+                                                            "canaryConsecutiveHealthy": 0,
+                                                            "phase": "Running"
+                                                        }
+                                                    });
+                                                    api.patch_status(&name, &PatchParams::apply("stellar-operator"), &Patch::Merge(&patch)).await?;
+                                                } else {
+                                                    // Step up weight, reset interval timer
+                                                    info!(
+                                                        "Canary {}/{} healthy (check {}/{}). Weight {} -> {}.",
+                                                        namespace, name, consecutive, cfg.success_threshold,
+                                                        current_weight, next_weight
+                                                    );
+                                                    let patch = serde_json::json!({
+                                                        "status": {
+                                                            "canaryWeight": next_weight,
+                                                            "canaryConsecutiveHealthy": consecutive,
+                                                            "canaryStartTime": Utc::now().to_rfc3339()
+                                                        }
+                                                    });
+                                                    api.patch_status(&name, &PatchParams::apply("stellar-operator"), &Patch::Merge(&patch)).await?;
+                                                }
                                             } else {
-                                                // 4b. Rollback Canary
-                                                warn!("Canary {}/{} is unhealthy. Rolling back.", namespace, name);
+                                                // 4b. Rollback — error rate spiked or pod unhealthy
+                                                warn!(
+                                                    "Canary {}/{} unhealthy. Rolling back. Reason: {}",
+                                                    namespace, name, canary_health.message
+                                                );
                                                 resources::delete_canary_resources(client, node, ctx.dry_run).await?;
 
-                                                // Clean up canary status, emitting failure message
-                                                let message = format!("Canary rollback triggered due to failed health check: {}", canary_health.message);
+                                                let message = format!(
+                                                    "Canary rollback triggered: {}",
+                                                    canary_health.message
+                                                );
+
+                                                let recorder = recorder_for(client, &ctx.event_reporter, node);
+                                                let _ = publish_object_event(
+                                                    &recorder,
+                                                    EventType::Warning,
+                                                    "CanaryRolledBack",
+                                                    "Canary",
+                                                    &message,
+                                                ).await;
+
                                                 let patch = serde_json::json!({
                                                     "status": {
                                                         "canaryVersion": null,
                                                         "canaryStartTime": null,
+                                                        "canaryWeight": null,
+                                                        "canaryErrorRate": null,
+                                                        "canaryConsecutiveHealthy": 0,
                                                         "phase": "Failed",
                                                         "message": message
                                                     }
                                                 });
-                                                api.patch_status(
-                                                    &name,
-                                                    &PatchParams::apply("stellar-operator"),
-                                                    &Patch::Merge(&patch),
-                                                ).await?;
+                                                api.patch_status(&name, &PatchParams::apply("stellar-operator"), &Patch::Merge(&patch)).await?;
 
-                                                // Create a k8s event for the rollback
                                                 let _ = remediation::emit_remediation_event(
                                                     client,
                                                     &ctx.event_reporter,
                                                     node,
-                                                    remediation::RemediationLevel::Restart, // Not exactly a restart but conceptually similar action
+                                                    remediation::RemediationLevel::Restart,
                                                     &message,
                                                 ).await;
                                             }
                                         } else {
                                             debug!(
-                                                "Canary interval not yet elapsed: {} < {} seconds",
+                                                "Canary interval not yet elapsed: {} < {}s",
                                                 elapsed_secs, cfg.check_interval_seconds
                                             );
                                         }
@@ -1455,7 +1698,7 @@ pub(crate) async fn apply_stellar_node(
 
     // 6.5. Quorum analysis for validators
     if node.spec.node_type == NodeType::Validator && health_result.healthy {
-        if let Err(e) = perform_quorum_analysis(client, node).await {
+        if let Err(e) = perform_quorum_analysis(client, node, ctx.retry_budget_max_attempts).await {
             warn!("Quorum analysis failed for {}/{}: {}", namespace, name, e);
             // Don't fail reconciliation on quorum analysis errors
         }
@@ -1534,6 +1777,79 @@ pub(crate) async fn apply_stellar_node(
             Ok(())
         })
         .await?;
+    }
+
+    // 8b. Cross-cloud failover for Horizon/SorobanRpc nodes
+    if node
+        .spec
+        .cross_cloud_failover
+        .as_ref()
+        .map(|c| c.enabled)
+        .unwrap_or(false)
+    {
+        let prev_cc_failover = node
+            .status
+            .as_ref()
+            .and_then(|s| s.cross_cloud_failover_status.as_ref())
+            .map(|s| s.failover_active)
+            .unwrap_or(false);
+
+        match cross_cloud_failover::reconcile_cross_cloud_failover(client, node).await {
+            Ok(Some(cc_status)) => {
+                if cc_status.failover_active && !prev_cc_failover {
+                    let recorder = recorder_for(client, &ctx.event_reporter, node);
+                    if let Err(e) = publish_object_event(
+                        &recorder,
+                        EventType::Normal,
+                        "CrossCloudFailoverActivated",
+                        "CrossCloudFailover",
+                        &format!(
+                            "Cross-cloud failover activated. Traffic routed to: {}",
+                            cc_status.active_cloud.as_deref().unwrap_or("unknown")
+                        ),
+                    )
+                    .await
+                    {
+                        warn!("Failed to publish CrossCloudFailoverActivated event: {e}");
+                    }
+                } else if !cc_status.failover_active && prev_cc_failover {
+                    let recorder = recorder_for(client, &ctx.event_reporter, node);
+                    if let Err(e) = publish_object_event(
+                        &recorder,
+                        EventType::Normal,
+                        "CrossCloudFailbackCompleted",
+                        "CrossCloudFailover",
+                        &format!(
+                            "Cross-cloud failback completed. Traffic restored to: {}",
+                            cc_status.active_cloud.as_deref().unwrap_or("primary")
+                        ),
+                    )
+                    .await
+                    {
+                        warn!("Failed to publish CrossCloudFailbackCompleted event: {e}");
+                    }
+                }
+
+                apply_or_emit(
+                    ctx,
+                    node,
+                    ActionType::Update,
+                    "Status (Cross-Cloud Failover)",
+                    async {
+                        update_cross_cloud_failover_status(client, node, cc_status).await?;
+                        Ok(())
+                    },
+                )
+                .await?;
+            }
+            Ok(None) => {} // Not configured or not applicable
+            Err(e) => {
+                warn!(
+                    "Cross-cloud failover reconciliation failed for {}/{}: {}",
+                    namespace, name, e
+                );
+            }
+        }
     }
 
     // 9. Auto-remediation check
@@ -2088,14 +2404,115 @@ async fn check_canary_health(
     client: &Client,
     node: &StellarNode,
 ) -> Result<health::HealthCheckResult> {
-    let _namespace = node.namespace().unwrap_or_else(|| "default".to_string());
-    let name = format!("{}-canary", node.name_any());
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let canary_name = format!("{}-canary", node.name_any());
 
     // Create a temporary node with the canary name to use the existing health check logic
     let mut canary_node = node.clone();
-    canary_node.metadata.name = Some(name);
+    canary_node.metadata.name = Some(canary_name.clone());
 
-    health::check_node_health(client, &canary_node, None).await
+    // 1. Basic pod readiness check
+    let readiness = health::check_node_health(client, &canary_node, None).await?;
+    if !readiness.healthy {
+        return Ok(readiness);
+    }
+
+    // 2. HTTP error rate check against the canary service
+    let max_error_rate = node
+        .spec
+        .strategy
+        .canary()
+        .map(|c| c.max_error_rate)
+        .unwrap_or(0.05);
+
+    match measure_canary_error_rate(client, node, &namespace).await {
+        Ok(error_rate) => {
+            if error_rate > max_error_rate {
+                return Ok(health::HealthCheckResult::unhealthy(format!(
+                    "Canary error rate {:.1}% exceeds threshold {:.1}%",
+                    error_rate * 100.0,
+                    max_error_rate * 100.0,
+                )));
+            }
+            Ok(health::HealthCheckResult::synced(readiness.ledger_sequence))
+        }
+        Err(e) => {
+            // If we can't measure error rate, fall back to readiness only
+            warn!(
+                "Could not measure canary error rate for {}/{}: {}. Falling back to readiness.",
+                namespace,
+                node.name_any(),
+                e
+            );
+            Ok(readiness)
+        }
+    }
+}
+
+/// Measure the 4xx/5xx error rate on the canary service by sampling its /metrics or /health.
+///
+/// Queries the canary pod directly and counts non-2xx responses over a short window.
+/// Returns a value in [0.0, 1.0].
+async fn measure_canary_error_rate(
+    client: &Client,
+    node: &StellarNode,
+    namespace: &str,
+) -> Result<f64> {
+    use k8s_openapi::api::core::v1::Pod;
+    use std::time::Duration;
+
+    let canary_name = format!("{}-canary", node.name_any());
+    let pod_api: Api<Pod> = Api::namespaced(client.clone(), namespace);
+    let lp = kube::api::ListParams::default()
+        .labels(&format!("app.kubernetes.io/instance={canary_name}"));
+
+    let pods = pod_api.list(&lp).await.map_err(Error::KubeError)?;
+    let pod = pods
+        .items
+        .iter()
+        .find(|p| {
+            p.status
+                .as_ref()
+                .and_then(|s| s.conditions.as_ref())
+                .map(|conds| {
+                    conds
+                        .iter()
+                        .any(|c| c.type_ == "Ready" && c.status == "True")
+                })
+                .unwrap_or(false)
+        });
+
+    let pod_ip = match pod.and_then(|p| p.status.as_ref()?.pod_ip.as_deref()) {
+        Some(ip) => ip.to_string(),
+        None => return Err(Error::ConfigError("No ready canary pod found".to_string())),
+    };
+
+    // Probe the Horizon /health endpoint multiple times to estimate error rate
+    let http_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| Error::ConfigError(format!("HTTP client error: {e}")))?;
+
+    let url = format!("http://{pod_ip}:8000/health");
+    let sample_count = 5u32;
+    let mut errors = 0u32;
+
+    for _ in 0..sample_count {
+        match http_client.get(&url).send().await {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                if status >= 400 {
+                    errors += 1;
+                }
+            }
+            Err(_) => {
+                errors += 1;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    Ok(errors as f64 / sample_count as f64)
 }
 
 /// Update status for suspended nodes
@@ -2880,18 +3297,18 @@ async fn run_archive_checkpoint_verification(
 /// Helper to parse duration string (e.g. "1h", "6h", "24h")
 fn parse_duration(s: &str) -> Result<Duration> {
     let s = s.trim();
-    if s.ends_with('h') {
-        let hours = s[..s.len() - 1]
+    if let Some(h) = s.strip_suffix('h') {
+        let hours = h
             .parse::<u64>()
             .map_err(|_| Error::ConfigError(format!("Invalid duration: {s}")))?;
         Ok(Duration::from_secs(hours * 3600))
-    } else if s.ends_with('m') {
-        let mins = s[..s.len() - 1]
+    } else if let Some(m) = s.strip_suffix('m') {
+        let mins = m
             .parse::<u64>()
             .map_err(|_| Error::ConfigError(format!("Invalid duration: {s}")))?;
         Ok(Duration::from_secs(mins * 60))
-    } else if s.ends_with('s') {
-        let secs = s[..s.len() - 1]
+    } else if let Some(sec) = s.strip_suffix('s') {
+        let secs = sec
             .parse::<u64>()
             .map_err(|_| Error::ConfigError(format!("Invalid duration: {s}")))?;
         Ok(Duration::from_secs(secs))
@@ -2954,6 +3371,31 @@ async fn update_dr_status(
     Ok(())
 }
 
+async fn update_cross_cloud_failover_status(
+    client: &Client,
+    node: &StellarNode,
+    status: crate::crd::CrossCloudFailoverStatus,
+) -> Result<()> {
+    let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
+    let api: Api<StellarNode> = Api::namespaced(client.clone(), &namespace);
+
+    let patch = serde_json::json!({
+        "status": {
+            "crossCloudFailoverStatus": status
+        }
+    });
+
+    api.patch_status(
+        &node.name_any(),
+        &PatchParams::apply("stellar-operator"),
+        &Patch::Merge(&patch),
+    )
+    .await
+    .map_err(Error::KubeError)?;
+
+    Ok(())
+}
+
 /// Public entry point for state-machine fuzzing. Calls the same reconcile logic as the controller.
 /// Only compiled when the `reconciler-fuzz` feature is enabled.
 #[cfg(feature = "reconciler-fuzz")]
@@ -3002,15 +3444,11 @@ pub(crate) fn error_policy(
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(0);
 
-    // Calculate backoff based on error type and retry count
+    // Apply operator retry budget based on error retriability.
     let retry_duration = if error.is_retriable() {
-        // Use exponential backoff for retriable errors
-        ctx.operator_config
-            .reconciler
-            .calculate_backoff(retry_count)
+        Duration::from_secs(ctx.retry_budget_retriable_secs)
     } else {
-        // Use fixed interval for non-retriable errors
-        Duration::from_secs(ctx.operator_config.reconciler.requeue_interval)
+        Duration::from_secs(ctx.retry_budget_nonretriable_secs)
     };
 
     debug!(
@@ -3026,7 +3464,11 @@ pub(crate) fn error_policy(
 
 /// Perform quorum analysis for validator nodes
 #[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
-async fn perform_quorum_analysis(client: &Client, node: &StellarNode) -> Result<()> {
+async fn perform_quorum_analysis(
+    client: &Client,
+    node: &StellarNode,
+    max_attempts: u32,
+) -> Result<()> {
     use super::quorum::QuorumAnalyzer;
 
     let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
@@ -3052,7 +3494,7 @@ async fn perform_quorum_analysis(client: &Client, node: &StellarNode) -> Result<
     }
 
     // Create analyzer and run analysis with timeout
-    let mut analyzer = QuorumAnalyzer::new(Duration::from_secs(10), 100);
+    let mut analyzer = QuorumAnalyzer::new(Duration::from_secs(10), 100, max_attempts);
 
     let analysis_future = analyzer.analyze_quorum(pod_ips);
     let result = tokio::time::timeout(Duration::from_secs(30), analysis_future)

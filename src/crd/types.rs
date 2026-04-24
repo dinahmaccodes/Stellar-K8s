@@ -196,6 +196,55 @@ pub enum StorageMode {
     Local,
 }
 
+/// Reference to a pre-computed snapshot used to bootstrap a new node.
+///
+/// Supports two bootstrap mechanisms:
+/// - **CSI VolumeSnapshot**: A Kubernetes `VolumeSnapshot` object (snapshot.storage.k8s.io/v1)
+///   that the operator uses as the PVC `dataSource` for near-instant volume cloning.
+/// - **Compressed backup**: A `.tar.gz` (or `.tar.zst`) archive stored in an S3-compatible
+///   bucket or a Kubernetes PVC. The operator injects an init container that downloads and
+///   extracts the archive into the data volume before Stellar Core starts.
+///
+/// Only one of `volume_snapshot_name` or `backup_url` should be set.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotRef {
+    /// Name of an existing `VolumeSnapshot` (snapshot.storage.k8s.io/v1) in the same namespace.
+    /// When set, the PVC is provisioned from this snapshot — no init container is needed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_snapshot_name: Option<String>,
+
+    /// Optional namespace of the VolumeSnapshot when it lives in a different namespace.
+    /// Requires `CrossNamespaceVolumeDataSource` feature gate on the cluster.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_snapshot_namespace: Option<String>,
+
+    /// URL of a compressed DB backup archive (`.tar.gz` or `.tar.zst`).
+    ///
+    /// Supported schemes:
+    /// - `s3://bucket/path/to/backup.tar.gz`
+    /// - `https://host/path/to/backup.tar.gz`
+    ///
+    /// The operator injects an init container (`snapshot-restore`) that downloads and
+    /// extracts the archive into `/data` before Stellar Core starts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_url: Option<String>,
+
+    /// Name of a Kubernetes Secret containing credentials for the backup URL.
+    ///
+    /// For S3 URLs the secret must have keys `AWS_ACCESS_KEY_ID` and
+    /// `AWS_SECRET_ACCESS_KEY` (and optionally `AWS_DEFAULT_REGION`).
+    /// For HTTPS URLs the secret may have a `BEARER_TOKEN` key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credentials_secret_ref: Option<String>,
+
+    /// Container image used for the restore init container.
+    /// Must have `aws` CLI (for S3) or `curl`/`wget` plus `tar` available.
+    /// Defaults to `amazon/aws-cli:latest` for S3 URLs and `alpine:3` for HTTPS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restore_image: Option<String>,
+}
+
 /// Storage configuration for persistent data
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -212,6 +261,17 @@ pub struct StorageConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "super::schema_utils::object_schema")]
     pub node_affinity: Option<k8s_openapi::api::core::v1::NodeAffinity>,
+
+    /// Bootstrap this node from a pre-computed snapshot or compressed DB backup.
+    ///
+    /// When set, the operator either:
+    /// - Provisions the PVC from a CSI `VolumeSnapshot` (zero-copy, near-instant), or
+    /// - Injects a `snapshot-restore` init container that downloads and extracts a
+    ///   compressed archive before Stellar Core starts.
+    ///
+    /// This reduces catch-up time from days to minutes for new validator nodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_ref: Option<SnapshotRef>,
 }
 
 impl Default for StorageConfig {
@@ -223,7 +283,106 @@ impl Default for StorageConfig {
             retention_policy: RetentionPolicy::default(),
             annotations: None,
             node_affinity: None,
+            snapshot_ref: None,
         }
+    }
+}
+
+/// Probe configuration for liveness, readiness, and startup probes.
+///
+/// All fields are optional; unset fields fall back to the operator's built-in defaults.
+/// Values must be positive integers where applicable.
+///
+/// # Example
+/// ```yaml
+/// probes:
+///   liveness:
+///     initialDelaySeconds: 30
+///     periodSeconds: 10
+///     failureThreshold: 3
+///   readiness:
+///     initialDelaySeconds: 10
+///     periodSeconds: 5
+///   startup:
+///     failureThreshold: 30
+///     periodSeconds: 10
+/// ```
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeOverride {
+    /// Number of seconds after the container starts before the probe is initiated. Min: 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_delay_seconds: Option<i32>,
+    /// How often (in seconds) to perform the probe. Min: 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub period_seconds: Option<i32>,
+    /// Number of seconds after which the probe times out. Min: 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<i32>,
+    /// Minimum consecutive successes for the probe to be considered successful. Min: 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success_threshold: Option<i32>,
+    /// Minimum consecutive failures for the probe to be considered failed. Min: 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_threshold: Option<i32>,
+}
+
+impl ProbeOverride {
+    /// Validate that all set fields are within acceptable ranges.
+    pub fn validate(&self, field_prefix: &str) -> Vec<String> {
+        let mut errors = Vec::new();
+        if let Some(v) = self.initial_delay_seconds {
+            if v < 0 {
+                errors.push(format!(
+                    "{field_prefix}.initialDelaySeconds must be >= 0, got {v}"
+                ));
+            }
+        }
+        for (name, val) in [
+            ("periodSeconds", self.period_seconds),
+            ("timeoutSeconds", self.timeout_seconds),
+            ("successThreshold", self.success_threshold),
+            ("failureThreshold", self.failure_threshold),
+        ] {
+            if let Some(v) = val {
+                if v < 1 {
+                    errors.push(format!("{field_prefix}.{name} must be >= 1, got {v}"));
+                }
+            }
+        }
+        errors
+    }
+}
+
+/// Per-container probe overrides for liveness, readiness, and startup probes.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeConfig {
+    /// Override for the liveness probe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub liveness: Option<ProbeOverride>,
+    /// Override for the readiness probe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<ProbeOverride>,
+    /// Override for the startup probe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub startup: Option<ProbeOverride>,
+}
+
+impl ProbeConfig {
+    /// Validate all probe overrides. Returns a list of error strings.
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        if let Some(p) = &self.liveness {
+            errors.extend(p.validate("spec.probes.liveness"));
+        }
+        if let Some(p) = &self.readiness {
+            errors.extend(p.validate("spec.probes.readiness"));
+        }
+        if let Some(p) = &self.startup {
+            errors.extend(p.validate("spec.probes.startup"));
+        }
+        errors
     }
 }
 
@@ -320,6 +479,10 @@ pub struct SnapshotScheduleConfig {
     /// Maximum number of snapshots to retain per node. Oldest snapshots are deleted when exceeded. 0 means no limit.
     #[serde(default)]
     pub retention_count: u32,
+    /// Reference to a Cloud KMS key for encrypting the snapshot (e.g. AWS KMS ARN, GCP KMS Key Name).
+    /// If provided, the operator will ensure the snapshot is encrypted using this key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encryption_key_ref: Option<String>,
 }
 
 /// Configuration to bootstrap a new node from an existing CSI VolumeSnapshot
@@ -412,6 +575,9 @@ pub struct ValidatorConfig {
     /// Quorum set configuration as TOML string
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quorum_set: Option<String>,
+    /// Known peers configuration as TOML string (KNOWN_PEERS)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub known_peers: Option<String>,
     /// Enable history archive for this validator
     #[serde(default)]
     pub enable_history_archive: bool,
@@ -430,9 +596,51 @@ pub struct ValidatorConfig {
     /// Trusted source for Validator Selection List (VSL)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vl_source: Option<String>,
+    /// Quorum set optimization configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quorum_optimization: Option<QuorumOptimizationConfig>,
     /// Cloud HSM configuration for secure key loading (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hsm_config: Option<HsmConfig>,
+    /// ExternalDNS configuration for automated peer discovery
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_dns: Option<ExternalDNSConfig>,
+}
+
+/// Quorum set optimization configuration
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct QuorumOptimizationConfig {
+    /// Enable automated quorum set optimization
+    #[serde(default)]
+    pub enabled: bool,
+    /// Optimization mode (Manual or Auto)
+    #[serde(default)]
+    pub mode: QuorumOptimizationMode,
+    /// Interval in seconds for optimization analysis (default: 3600s / 1h)
+    #[serde(default = "default_optimization_interval")]
+    pub interval_secs: u32,
+    /// Maximum RTT threshold in ms for considering a peer "slow" (default: 500ms)
+    #[serde(default = "default_rtt_threshold")]
+    pub rtt_threshold_ms: u32,
+}
+
+fn default_optimization_interval() -> u32 {
+    3600
+}
+
+fn default_rtt_threshold() -> u32 {
+    500
+}
+
+/// Quorum optimization mode
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+pub enum QuorumOptimizationMode {
+    /// Suggest updates only (emits events and updates status)
+    #[default]
+    Manual,
+    /// Automatically apply recommended updates to the CRD
+    Auto,
 }
 
 // =============================================================================
@@ -596,6 +804,9 @@ pub struct IngressConfig {
     pub cert_manager_cluster_issuer: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<BTreeMap<String, String>>,
+    /// ExternalDNS configuration for automated record management
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_dns: Option<ExternalDNSConfig>,
 }
 
 /// Ingress host entry
@@ -646,6 +857,15 @@ pub struct AutoscalingConfig {
     pub custom_metrics: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub behavior: Option<ScalingBehavior>,
+    /// Predictive scaling configuration.
+    ///
+    /// When enabled, the operator uses a Holt-Winters forecasting model to
+    /// predict the next hour's ledger volume and pre-emptively adjusts
+    /// `minReplicas` before traffic spikes occur.
+    ///
+    /// Only applicable to `Horizon` nodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predictive_scaling: Option<crate::controller::predictive_scaling::PredictiveScalingConfig>,
 }
 
 /// Scaling behavior configuration for HPA
@@ -775,7 +995,7 @@ pub enum RolloutStrategyType {
 }
 
 /// Rollout strategy for updates
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RolloutStrategy {
     #[serde(rename = "type")]
@@ -795,13 +1015,35 @@ impl RolloutStrategy {
 }
 
 /// Configuration for Canary rollout
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CanaryConfig {
+    /// Initial traffic weight sent to the canary (0–100). Default: 10
     #[serde(default = "default_canary_weight")]
     pub weight: i32,
+
+    /// How often (seconds) to evaluate canary health before promoting or rolling back.
+    /// Default: 300 (5 minutes)
     #[serde(default = "default_canary_interval")]
     pub check_interval_seconds: i32,
+
+    /// Maximum 4xx/5xx error rate (0.0–1.0) allowed before triggering automatic rollback.
+    /// E.g. 0.05 = 5%. Default: 0.05
+    #[serde(default = "default_max_error_rate")]
+    pub max_error_rate: f64,
+
+    /// When set, the operator progressively increases canary weight by this amount
+    /// each check interval until `max_weight` is reached. Default: 0 (no stepping)
+    #[serde(default)]
+    pub step_weight: i32,
+
+    /// Maximum weight the canary may reach during progressive rollout. Default: 50
+    #[serde(default = "default_max_weight")]
+    pub max_weight: i32,
+
+    /// Number of consecutive healthy checks required before promoting. Default: 1
+    #[serde(default = "default_canary_success_threshold")]
+    pub success_threshold: i32,
 }
 
 fn default_canary_weight() -> i32 {
@@ -810,6 +1052,18 @@ fn default_canary_weight() -> i32 {
 
 fn default_canary_interval() -> i32 {
     300
+}
+
+fn default_max_error_rate() -> f64 {
+    0.05
+}
+
+fn default_max_weight() -> i32 {
+    50
+}
+
+fn default_canary_success_threshold() -> i32 {
+    1
 }
 
 /// Load Balancer configuration for external access via MetalLB
@@ -834,6 +1088,9 @@ pub struct LoadBalancerConfig {
     pub health_check_enabled: bool,
     #[serde(default = "default_health_check_port")]
     pub health_check_port: i32,
+    /// ExternalDNS configuration for the LoadBalancer service
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_dns: Option<ExternalDNSConfig>,
 }
 
 fn default_health_check_port() -> i32 {
@@ -1198,7 +1455,7 @@ pub struct DRDrillResult {
 
 /// Placement configuration for intelligent pod scheduling.
 /// Enables SCP-aware anti-affinity to ensure validator resilience.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlacementConfig {
     /// Enable SCP-aware anti-affinity.
@@ -1206,6 +1463,67 @@ pub struct PlacementConfig {
     /// placing nodes from the same quorum slice on the same physical host.
     #[serde(default)]
     pub scp_aware_anti_affinity: bool,
+
+    /// Jurisdictional compliance configuration.
+    ///
+    /// When set, the operator enforces that this node is physically placed in
+    /// the specified geographical jurisdiction by injecting `nodeAffinity` and
+    /// `tolerations` that match the corresponding Kubernetes node labels.
+    ///
+    /// # Example
+    /// ```yaml
+    /// placement:
+    ///   jurisdiction:
+    ///     code: "EU"
+    ///     regions:
+    ///       - "eu-west-1"
+    ///       - "eu-central-1"
+    ///     tolerations:
+    ///       - key: "jurisdiction"
+    ///         operator: "Equal"
+    ///         value: "EU"
+    ///         effect: "NoSchedule"
+    /// ```
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jurisdiction: Option<JurisdictionConfig>,
+}
+
+/// Jurisdictional compliance configuration for node placement.
+///
+/// Maps a jurisdiction code (e.g. `"EU"`, `"US"`, `"SG"`) to Kubernetes
+/// node labels so that the operator can enforce physical placement via
+/// `nodeAffinity` and `tolerations`.
+///
+/// The operator uses `topology.kubernetes.io/region` by default, but any
+/// label key can be specified via `label_key`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct JurisdictionConfig {
+    /// ISO 3166-1 alpha-2 country code or a custom jurisdiction identifier
+    /// (e.g. `"EU"`, `"US"`, `"SG"`, `"DE"`).
+    pub code: String,
+
+    /// List of Kubernetes region values that satisfy this jurisdiction.
+    /// Mapped to the `label_key` node label (default: `topology.kubernetes.io/region`).
+    ///
+    /// Example: `["eu-west-1", "eu-central-1"]`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<String>,
+
+    /// Node label key used for region matching.
+    /// Defaults to `topology.kubernetes.io/region`.
+    #[serde(default = "default_jurisdiction_label_key")]
+    pub label_key: String,
+
+    /// Additional tolerations to apply when scheduling in this jurisdiction.
+    /// Useful when jurisdiction-specific nodes carry taints (e.g. `jurisdiction=EU:NoSchedule`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(with = "Vec<serde_json::Value>")]
+    pub tolerations: Vec<k8s_openapi::api::core::v1::Toleration>,
+}
+
+fn default_jurisdiction_label_key() -> String {
+    "topology.kubernetes.io/region".to_string()
 }
 
 /// Status of a DR drill execution
@@ -1600,6 +1918,57 @@ pub enum PgBouncerPoolMode {
 }
 
 // ============================================================================
+// ============================================================================
+// Hitless Upgrade (#503)
+// ============================================================================
+
+/// Configuration for zero-interruption (hitless) upgrades of Stellar Core.
+///
+/// When enabled, the operator injects a `stellar-handoff` sidecar that
+/// transfers open peer TCP socket file descriptors to the new container
+/// via `SCM_RIGHTS` over a Unix domain socket, avoiding peer re-discovery.
+///
+/// See `docs/hitless-upgrade.md` for the full design and feasibility study.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HitlessUpgradeConfig {
+    /// Enable hitless upgrade support.
+    /// When `true`, the `stellar-handoff` sidecar is injected into the pod.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Maximum seconds to wait for the FD handoff to complete before
+    /// falling back to a standard rolling restart.
+    /// Default: 10
+    #[serde(default = "default_handoff_timeout")]
+    pub handoff_timeout_seconds: u32,
+
+    /// Fall back to a standard rolling restart if the handoff times out.
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub fallback_to_rolling_restart: bool,
+
+    /// Container image for the handoff sidecar.
+    /// Defaults to the same image as the operator with the `handoff-sidecar` binary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidecar_image: Option<String>,
+}
+
+fn default_handoff_timeout() -> u32 {
+    10
+}
+
+impl Default for HitlessUpgradeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            handoff_timeout_seconds: default_handoff_timeout(),
+            fallback_to_rolling_restart: true,
+            sidecar_image: None,
+        }
+    }
+}
+
 // NAT Traversal Configuration
 // ============================================================================
 
@@ -1710,4 +2079,218 @@ pub struct LabelPropagationConfig {
     /// Takes precedence over allowList.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deny_list: Vec<String>,
+}
+
+// ── Cross-Cloud Failover ─────────────────────────────────────────────────────
+
+/// Cross-cloud failover configuration for Horizon clusters.
+///
+/// Enables seamless traffic failover between cloud providers (AWS, GCP, Azure)
+/// during major provider outages, targeting 99.99% availability.
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossCloudFailoverConfig {
+    /// Enable cross-cloud failover
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Role of this cluster in the cross-cloud setup
+    #[serde(default)]
+    pub role: CrossCloudRole,
+
+    /// Cloud provider identifier for this cluster (e.g. "aws", "gcp", "azure")
+    pub primary_cloud_provider: String,
+
+    /// All cloud endpoints participating in the failover pool
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clouds: Vec<CloudEndpointConfig>,
+
+    /// Global Load Balancer configuration (Cloudflare, F5, AWS Global Accelerator)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub global_load_balancer: Option<GlobalLoadBalancerConfig>,
+
+    /// Database synchronization configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database_sync: Option<DatabaseSyncConfig>,
+
+    /// Number of consecutive health check failures before triggering failover
+    #[serde(default = "default_failure_threshold_cc")]
+    pub failure_threshold: Option<u32>,
+
+    /// Health check timeout in seconds
+    #[serde(default = "default_health_check_timeout_cc")]
+    pub health_check_timeout_seconds: Option<u32>,
+
+    /// Automatically fail back to primary cloud when it recovers
+    #[serde(default)]
+    pub auto_failback: Option<bool>,
+}
+
+fn default_failure_threshold_cc() -> Option<u32> {
+    Some(3)
+}
+
+fn default_health_check_timeout_cc() -> Option<u32> {
+    Some(5)
+}
+
+/// Role of this cluster in the cross-cloud failover setup
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CrossCloudRole {
+    /// This cluster is the primary traffic destination
+    #[default]
+    Primary,
+    /// This cluster is a warm standby
+    Secondary,
+}
+
+/// Configuration for a single cloud endpoint in the failover pool
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudEndpointConfig {
+    /// Cloud provider identifier (e.g. "aws", "gcp", "azure")
+    pub cloud_provider: String,
+
+    /// Cloud region (e.g. "us-east-1", "us-central1")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+
+    /// Public hostname or IP of the Horizon cluster in this cloud
+    pub endpoint: String,
+
+    /// Priority for failover selection (higher = preferred). Default: 100
+    #[serde(default = "default_cloud_priority")]
+    pub priority: u32,
+
+    /// Whether this cloud endpoint is active
+    #[serde(default = "default_true_cc")]
+    pub enabled: bool,
+}
+
+fn default_cloud_priority() -> u32 {
+    100
+}
+
+fn default_true_cc() -> bool {
+    true
+}
+
+/// Global Load Balancer provider and configuration
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalLoadBalancerConfig {
+    /// GLB provider
+    pub provider: GLBProvider,
+
+    /// Public hostname managed by the GLB (e.g. "horizon.stellar.example.com")
+    pub hostname: String,
+
+    /// Path used for health checks (default: "/health")
+    #[serde(default = "default_health_path")]
+    pub health_check_path: Option<String>,
+
+    /// DNS TTL in seconds (lower = faster failover, higher = less DNS traffic)
+    #[serde(default = "default_glb_ttl")]
+    pub ttl_seconds: u32,
+
+    /// Kubernetes Secret containing GLB API credentials
+    /// For Cloudflare: keys `CF_API_TOKEN` and `CF_ZONE_ID`
+    /// For F5: keys `F5_USERNAME` and `F5_PASSWORD`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credentials_secret_ref: Option<String>,
+}
+
+fn default_health_path() -> Option<String> {
+    Some("/health".to_string())
+}
+
+fn default_glb_ttl() -> u32 {
+    60
+}
+
+/// Supported Global Load Balancer providers
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum GLBProvider {
+    /// Cloudflare Load Balancing / DNS
+    #[default]
+    Cloudflare,
+    /// F5 BIG-IP Global Traffic Manager
+    F5,
+    /// AWS Global Accelerator
+    AWSGlobalAccelerator,
+    /// Generic external-dns (works with any DNS provider)
+    ExternalDNS,
+}
+
+/// Database synchronization configuration for cross-cloud failover
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseSyncConfig {
+    /// Synchronization method
+    pub method: DatabaseSyncMethod,
+
+    /// PostgreSQL logical replication slot name (for LogicalReplication method)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replication_slot: Option<String>,
+
+    /// Maximum acceptable replication lag in seconds before blocking failover
+    #[serde(default = "default_max_lag")]
+    pub max_lag_seconds: Option<u32>,
+
+    /// Secret containing database credentials for the standby cluster
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub standby_credentials_secret_ref: Option<String>,
+}
+
+fn default_max_lag() -> Option<u32> {
+    Some(30)
+}
+
+/// Database synchronization method
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DatabaseSyncMethod {
+    /// PostgreSQL logical replication (lowest RPO, requires pg_logical)
+    #[default]
+    LogicalReplication,
+    /// CloudNativePG cross-cluster replica (uses CNPG Cluster with externalClusters)
+    CNPGCrossCluster,
+    /// Periodic snapshot restore (higher RPO, simpler setup)
+    SnapshotRestore,
+}
+
+/// Status of the cross-cloud failover
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossCloudFailoverStatus {
+    /// Current role of this cluster
+    pub current_role: Option<CrossCloudRole>,
+
+    /// Whether a failover is currently active
+    #[serde(default)]
+    pub failover_active: bool,
+
+    /// Cloud provider currently receiving traffic
+    pub active_cloud: Option<String>,
+
+    /// Health status of each cloud endpoint
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cloud_health: Option<Vec<crate::controller::cross_cloud_failover::CloudHealthStatus>>,
+
+    /// Timestamp of the last health check
+    pub last_check_time: Option<String>,
+
+    /// Timestamp of the last failover
+    pub last_failover_time: Option<String>,
+
+    /// Reason for the last failover
+    pub last_failover_reason: Option<String>,
+
+    /// Timestamp of the last failback
+    pub last_failback_time: Option<String>,
+
+    /// Timestamp of the last failover attempt (may have been blocked)
+    pub last_failover_attempt: Option<String>,
 }

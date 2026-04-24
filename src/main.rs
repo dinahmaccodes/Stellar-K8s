@@ -1,3 +1,4 @@
+use std::env;
 use std::process::{self};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -22,19 +23,30 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
     author,
     version,
     about = "Stellar-K8s: Cloud-Native Kubernetes Operator for Stellar Infrastructure",
-    long_about = "stellar-operator manages StellarNode custom resources on Kubernetes.\n\n\
-        It reconciles the desired state of Stellar validator, Horizon, and Soroban RPC nodes,\n\
-        handles leader election, optional mTLS, peer discovery, and a latency-aware scheduler.\n\n\
-        EXAMPLES:\n  \
-        stellar-operator run --namespace stellar-system\n  \
-        stellar-operator run --namespace stellar-system --enable-mtls\n  \
-        stellar-operator run --namespace stellar-system --scheduler\n  \
-        stellar-operator run --namespace stellar-system --dry-run\n  \
-        stellar-operator run --dump-config\n  \
-        stellar-operator webhook --bind 0.0.0.0:8443 --cert-path /tls/tls.crt --key-path /tls/tls.key\n  \
-        stellar-operator info --namespace stellar-system\n  \
-        stellar-operator check-crd\n  \
-        stellar-operator version"
+    long_about = "\
+\x1b[1;36m\
+  ███████╗████████╗███████╗██╗     ██╗      █████╗ ██████╗       ██╗  ██╗ █████╗ ███████╗\n\
+  ██╔════╝╚══██╔══╝██╔════╝██║     ██║     ██╔══██╗██╔══██╗      ██║ ██╔╝██╔══██╗██╔════╝\n\
+  ███████╗   ██║   █████╗  ██║     ██║     ███████║██████╔╝█████╗█████╔╝ ╚█████╔╝███████╗\n\
+  ╚════██║   ██║   ██╔══╝  ██║     ██║     ██╔══██║██╔══██╗╚════╝██╔═██╗ ██╔══██╗╚════██║\n\
+  ███████║   ██║   ███████╗███████╗███████╗██║  ██║██║  ██║      ██║  ██╗╚█████╔╝███████║\n\
+  ╚══════╝   ╚═╝   ╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝      ╚═╝  ╚═╝ ╚════╝ ╚══════╝\n\
+\x1b[0m\
+\x1b[1;35m  Cloud-Native Stellar Infrastructure on Kubernetes\x1b[0m\n\
+\x1b[90m  Built with Rust 🦀 · Powered by kube-rs · Apache 2.0\x1b[0m\n\n\
+stellar-operator manages StellarNode custom resources on Kubernetes.\n\n\
+It reconciles the desired state of Stellar validator, Horizon, and Soroban RPC nodes,\n\
+handles leader election, optional mTLS, peer discovery, and a latency-aware scheduler.\n\n\
+EXAMPLES:\n  \
+stellar-operator run --namespace stellar-system\n  \
+stellar-operator run --namespace stellar-system --enable-mtls\n  \
+stellar-operator run --namespace stellar-system --scheduler\n  \
+stellar-operator run --namespace stellar-system --dry-run\n  \
+stellar-operator run --dump-config\n  \
+stellar-operator webhook --bind 0.0.0.0:8443 --cert-path /tls/tls.crt --key-path /tls/tls.key\n  \
+stellar-operator info --namespace stellar-system\n  \
+stellar-operator check-crd\n  \
+stellar-operator version"
 )]
 struct Args {
     #[command(subcommand)]
@@ -47,6 +59,8 @@ enum Commands {
     Run(RunArgs),
     /// Run the admission webhook server
     Webhook(WebhookArgs),
+    /// Run the StellarBenchmark controller (can be co-located with the main operator)
+    Benchmark(BenchmarkArgs),
     /// Show version and build information
     Version,
     /// Show cluster information (node count) for a namespace
@@ -93,6 +107,11 @@ enum LogFormat {
         NOTE: --scheduler and --dry-run are mutually exclusive."
 )]
 struct RunArgs {
+    /// GitHub repository in owner/repo format used for label readiness preflight.
+    /// If omitted, GitHub preflight is skipped.
+    #[arg(long, env = "GITHUB_REPOSITORY")]
+    github_repo: Option<String>,
+
     /// Enable mutual TLS for the REST API.
     ///
     /// When set, the operator provisions a CA and server certificate in the target namespace,
@@ -152,6 +171,18 @@ struct RunArgs {
     /// Example: --scheduler-name stellar-latency-scheduler
     #[arg(long, env = "SCHEDULER_NAME", default_value = "stellar-scheduler")]
     scheduler_name: String,
+
+    /// Requeue interval in seconds for retriable reconciliation errors.
+    #[arg(long, env = "RETRY_BUDGET_RETRIABLE_SECS", default_value_t = 15)]
+    retry_budget_retriable_secs: u64,
+
+    /// Requeue interval in seconds for non-retriable reconciliation errors.
+    #[arg(long, env = "RETRY_BUDGET_NONRETRIABLE_SECS", default_value_t = 60)]
+    retry_budget_nonretriable_secs: u64,
+
+    /// Maximum HTTP retry attempts for SCP and quorum queries.
+    #[arg(long, env = "RETRY_BUDGET_MAX_ATTEMPTS", default_value_t = 3)]
+    retry_budget_max_attempts: u32,
 
     /// Print the resolved runtime configuration and exit without starting the operator.
     #[arg(long)]
@@ -321,6 +352,32 @@ struct WebhookArgs {
     log_format: LogFormat,
 }
 
+/// Arguments for the `benchmark` subcommand.
+#[derive(Parser, Debug)]
+#[command(
+    about = "Run the StellarBenchmark controller",
+    long_about = "Starts the StellarBenchmark controller that watches StellarBenchmark resources\n\
+        and reconciles them by spinning up ephemeral load-generator pods, collecting metrics,\n\
+        and writing results to BenchmarkReport resources or ConfigMaps.\n\n\
+        This controller can run standalone or be co-located with the main operator process.\n\n\
+        EXAMPLES:\n  \
+        stellar-operator benchmark\n  \
+        stellar-operator benchmark --namespace stellar-system\n  \
+        stellar-operator benchmark --log-level debug"
+)]
+struct BenchmarkArgs {
+    /// Kubernetes namespace to watch for StellarBenchmark resources.
+    ///
+    /// When unset, the controller watches all namespaces.
+    /// Env: OPERATOR_NAMESPACE
+    #[arg(long, env = "OPERATOR_NAMESPACE", default_value = "default")]
+    namespace: String,
+
+    /// Minimum log level.
+    #[arg(long, env = "LOG_LEVEL", default_value = "info")]
+    log_level: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let args = Args::parse();
@@ -348,6 +405,9 @@ async fn main() -> Result<(), Error> {
         }
         Commands::Webhook(webhook_args) => {
             return run_webhook(webhook_args).await;
+        }
+        Commands::Benchmark(benchmark_args) => {
+            return run_benchmark_controller_cmd(benchmark_args).await;
         }
         Commands::Simulator(cli) => {
             return run_simulator(cli).await;
@@ -784,11 +844,49 @@ async fn run_generate_runbook(args: GenerateRunbookArgs) -> Result<(), Error> {
 
     // Output to file or stdout
     if let Some(output_path) = args.output {
-        std::fs::write(&output_path, &runbook).map_err(|e| Error::IoError(e))?;
-        println!("Runbook generated successfully: {}", output_path);
+        std::fs::write(&output_path, &runbook).map_err(Error::IoError)?;
+        println!("Runbook generated successfully: {output_path}");
     } else {
-        println!("{}", runbook);
+        println!("{runbook}");
     }
+
+    Ok(())
+}
+
+/// Run the StellarBenchmark controller as a standalone process.
+async fn run_benchmark_controller_cmd(args: BenchmarkArgs) -> Result<(), Error> {
+    use stellar_k8s::controller::run_benchmark_controller;
+
+    // Minimal tracing setup for the benchmark controller.
+    let env_filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(
+            args.log_level
+                .parse()
+                .unwrap_or(tracing::Level::INFO.into()),
+        )
+        .from_env_lossy();
+
+    tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(env_filter)
+        .init();
+
+    info!(
+        "Starting StellarBenchmark controller v{}",
+        env!("CARGO_PKG_VERSION")
+    );
+
+    let client = kube::Client::try_default()
+        .await
+        .map_err(Error::KubeError)?;
+
+    // The benchmark controller always acts as leader (it is stateless and
+    // idempotent, so multiple replicas are safe).
+    let is_leader = Arc::new(AtomicBool::new(true));
+
+    run_benchmark_controller(client, is_leader)
+        .await
+        .map_err(|e| Error::ConfigError(format!("Benchmark controller error: {e}")))?;
 
     Ok(())
 }
@@ -872,6 +970,9 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
                 "dry_run": args.dry_run,
                 "scheduler": args.scheduler,
                 "scheduler_name": args.scheduler_name,
+                "retry_budget_retriable_secs": args.retry_budget_retriable_secs,
+                "retry_budget_nonretriable_secs": args.retry_budget_nonretriable_secs,
+                "retry_budget_max_attempts": args.retry_budget_max_attempts,
             },
             "operator_config": operator_config,
         });
@@ -926,6 +1027,18 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
         "Starting Stellar-K8s Operator v{}",
         env!("CARGO_PKG_VERSION")
     );
+
+    // Fast-fail preflight for GitHub automation dependencies when explicitly configured.
+    let github_repo = args
+        .github_repo
+        .as_deref()
+        .map(str::trim)
+        .filter(|r| !r.is_empty());
+    if let Some(repo) = github_repo {
+        preflight::run_gh_label_preflight(Some(repo))?;
+    } else {
+        info!("Skipping GitHub preflight (GITHUB_REPOSITORY not set)");
+    }
 
     // Initialise operator build-info metric (Issue #301)
     #[cfg(feature = "metrics")]
@@ -1036,6 +1149,7 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
 
     // Create shared controller state
     let operator_config = stellar_k8s::controller::OperatorConfig::load();
+    let oidc_config = operator_config.oidc.clone();
     let state = Arc::new(controller::ControllerState {
         client: client.clone(),
         enable_mtls: args.enable_mtls,
@@ -1043,6 +1157,9 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
         watch_namespace: args.watch_namespace.clone(),
         mtls_config: mtls_config.clone(),
         dry_run: args.dry_run,
+        retry_budget_retriable_secs: args.retry_budget_retriable_secs,
+        retry_budget_nonretriable_secs: args.retry_budget_nonretriable_secs,
+        retry_budget_max_attempts: args.retry_budget_max_attempts,
         is_leader: Arc::clone(&is_leader),
         event_reporter: kube::runtime::events::Reporter {
             controller: "stellar-operator".to_string(),
@@ -1054,6 +1171,9 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
         log_reload_handle: reload_handle,
         log_level_expires_at: Arc::new(tokio::sync::Mutex::new(None)),
         last_event_received: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        job_registry: Arc::new(stellar_k8s::controller::JobRegistry::new()),
+        audit_log: Arc::new(stellar_k8s::controller::AuditLog::new()),
+        oidc_config,
     });
 
     // Start the peer discovery manager
@@ -1193,6 +1313,36 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
     let shutdown_namespace = args.namespace.clone();
     let shutdown_is_leader = Arc::clone(&is_leader);
     let shutdown_identity = holder_identity.clone();
+
+    // Spawn the StellarBenchmark controller as a background task so it runs
+    // alongside the main StellarNode controller in the same process.
+    {
+        let bench_client = client.clone();
+        let bench_is_leader = Arc::clone(&is_leader);
+        tokio::spawn(async move {
+            if let Err(e) =
+                controller::run_benchmark_controller(bench_client, bench_is_leader).await
+            {
+                tracing::error!("StellarBenchmark controller error: {:?}", e);
+            }
+        });
+    }
+
+    // Spawn the auto-snapshot worker.
+    // This background task periodically creates CSI VolumeSnapshots for all
+    // Validator nodes with `spec.snapshotSchedule` configured, and tracks
+    // bootstrap status for nodes started from a snapshot.
+    {
+        let snapshot_client = client.clone();
+        let snapshot_reporter = kube::runtime::events::Reporter {
+            controller: "stellar-operator-snapshot-worker".to_string(),
+            instance: None,
+        };
+        tokio::spawn(async move {
+            controller::run_snapshot_worker(snapshot_client, snapshot_reporter).await;
+        });
+        info!("Auto-snapshot worker spawned");
+    }
 
     let result = tokio::select! {
         res = controller::run_controller(state) => {
