@@ -95,6 +95,12 @@ pub struct ControllerState {
     pub watch_namespace: Option<String>,
     pub mtls_config: Option<crate::MtlsConfig>,
     pub dry_run: bool,
+    /// Requeue interval in seconds for retriable reconciliation errors.
+    pub retry_budget_retriable_secs: u64,
+    /// Requeue interval in seconds for non-retriable reconciliation errors.
+    pub retry_budget_nonretriable_secs: u64,
+    /// Maximum HTTP retry attempts for SCP and quorum queries.
+    pub retry_budget_max_attempts: u32,
     pub is_leader: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Identifies this operator when publishing Kubernetes Events via [`Recorder`].
     pub event_reporter: Reporter,
@@ -162,6 +168,9 @@ impl ControllerState {
 ///         watch_namespace: None,
 ///         mtls_config: None,
 ///         dry_run: false,
+///         retry_budget_retriable_secs: 15,
+///         retry_budget_nonretriable_secs: 60,
+///         retry_budget_max_attempts: 3,
 ///         is_leader: Arc::new(AtomicBool::new(true)),
 ///         event_reporter: kube::runtime::events::Reporter {
 ///             controller: "stellar-operator".to_string(),
@@ -1510,7 +1519,7 @@ pub(crate) async fn apply_stellar_node(
 
     // 6.5. Quorum analysis for validators
     if node.spec.node_type == NodeType::Validator && health_result.healthy {
-        if let Err(e) = perform_quorum_analysis(client, node).await {
+        if let Err(e) = perform_quorum_analysis(client, node, ctx.retry_budget_max_attempts).await {
             warn!("Quorum analysis failed for {}/{}: {}", namespace, name, e);
             // Don't fail reconciliation on quorum analysis errors
         }
@@ -3155,15 +3164,11 @@ pub(crate) fn error_policy(
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(0);
 
-    // Calculate backoff based on error type and retry count
+    // Apply operator retry budget based on error retriability.
     let retry_duration = if error.is_retriable() {
-        // Use exponential backoff for retriable errors
-        ctx.operator_config
-            .reconciler
-            .calculate_backoff(retry_count)
+        Duration::from_secs(ctx.retry_budget_retriable_secs)
     } else {
-        // Use fixed interval for non-retriable errors
-        Duration::from_secs(ctx.operator_config.reconciler.requeue_interval)
+        Duration::from_secs(ctx.retry_budget_nonretriable_secs)
     };
 
     debug!(
@@ -3179,7 +3184,11 @@ pub(crate) fn error_policy(
 
 /// Perform quorum analysis for validator nodes
 #[instrument(skip(client, node), fields(name = %node.name_any(), namespace = node.namespace()))]
-async fn perform_quorum_analysis(client: &Client, node: &StellarNode) -> Result<()> {
+async fn perform_quorum_analysis(
+    client: &Client,
+    node: &StellarNode,
+    max_attempts: u32,
+) -> Result<()> {
     use super::quorum::QuorumAnalyzer;
 
     let namespace = node.namespace().unwrap_or_else(|| "default".to_string());
@@ -3205,7 +3214,7 @@ async fn perform_quorum_analysis(client: &Client, node: &StellarNode) -> Result<
     }
 
     // Create analyzer and run analysis with timeout
-    let mut analyzer = QuorumAnalyzer::new(Duration::from_secs(10), 100, 3);
+    let mut analyzer = QuorumAnalyzer::new(Duration::from_secs(10), 100, max_attempts);
 
     let analysis_future = analyzer.analyze_quorum(pod_ips);
     let result = tokio::time::timeout(Duration::from_secs(30), analysis_future)

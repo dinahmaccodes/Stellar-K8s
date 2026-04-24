@@ -171,6 +171,18 @@ struct RunArgs {
     #[arg(long, env = "SCHEDULER_NAME", default_value = "stellar-scheduler")]
     scheduler_name: String,
 
+    /// Requeue interval in seconds for retriable reconciliation errors.
+    #[arg(long, env = "RETRY_BUDGET_RETRIABLE_SECS", default_value_t = 15)]
+    retry_budget_retriable_secs: u64,
+
+    /// Requeue interval in seconds for non-retriable reconciliation errors.
+    #[arg(long, env = "RETRY_BUDGET_NONRETRIABLE_SECS", default_value_t = 60)]
+    retry_budget_nonretriable_secs: u64,
+
+    /// Maximum HTTP retry attempts for SCP and quorum queries.
+    #[arg(long, env = "RETRY_BUDGET_MAX_ATTEMPTS", default_value_t = 3)]
+    retry_budget_max_attempts: u32,
+
     /// Print the resolved runtime configuration and exit without starting the operator.
     #[arg(long)]
     pub dump_config: bool,
@@ -957,6 +969,9 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
                 "dry_run": args.dry_run,
                 "scheduler": args.scheduler,
                 "scheduler_name": args.scheduler_name,
+                "retry_budget_retriable_secs": args.retry_budget_retriable_secs,
+                "retry_budget_nonretriable_secs": args.retry_budget_nonretriable_secs,
+                "retry_budget_max_attempts": args.retry_budget_max_attempts,
             },
             "operator_config": operator_config,
         });
@@ -1141,6 +1156,9 @@ async fn run_operator(args: RunArgs) -> Result<(), Error> {
         watch_namespace: args.watch_namespace.clone(),
         mtls_config: mtls_config.clone(),
         dry_run: args.dry_run,
+        retry_budget_retriable_secs: args.retry_budget_retriable_secs,
+        retry_budget_nonretriable_secs: args.retry_budget_nonretriable_secs,
+        retry_budget_max_attempts: args.retry_budget_max_attempts,
         is_leader: Arc::clone(&is_leader),
         event_reporter: kube::runtime::events::Reporter {
             controller: "stellar-operator".to_string(),
