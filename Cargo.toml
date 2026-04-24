@@ -21,7 +21,7 @@ kube = { version = "0.94", features = [
     "admission",
 ] }
 kube-runtime = { version = "0.94", features = ["unstable-runtime"] }
-k8s-openapi = { version = "0.26", default-features = false, features = [
+k8s-openapi = { version = "0.22", default-features = false, features = [
     "v1_30",
 ] }
 
@@ -35,7 +35,7 @@ serde_json = "1"
 serde_yaml = "0.9"
 
 # Schema generation for CRDs
-schemars = "1.2"
+schemars = "0.8"
 
 # Error handling
 thiserror = "1"
@@ -100,8 +100,8 @@ rustls-pki-types = "1.14.0"
 x509-parser = "0.16"
 
 # Wasm runtime for custom validation plugins
-wasmtime = { version = "24.0.6", optional = true }
-wasmtime-wasi = { version = "24.0.6", features = ["preview1"], optional = true }
+wasmtime = { version = "24.0.7", optional = true }
+wasmtime-wasi = { version = "24.0.7", features = ["preview1"], optional = true }
 
 # Additional crypto for webhook TLS
 tokio-rustls = { version = "0.26", optional = true }
@@ -175,4 +175,3 @@ name = "stellar-completions"
 path = "src/bin/completions.rs"
 
 [workspace]
-

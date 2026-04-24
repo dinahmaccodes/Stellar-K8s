@@ -110,6 +110,8 @@ pub async fn run_server(
         .route("/api/v1/dashboard/nodes/:namespace/:name/conditions", get(dashboard_handlers::get_node_conditions))
         .route("/api/v1/dashboard/nodes/:namespace/:name/metrics", get(dashboard_handlers::get_node_metrics))
         .route("/api/v1/dashboard/nodes/:namespace/:name/actions", axum::routing::post(dashboard_handlers::execute_node_action))
+        // Operator logs
+        .route("/api/v1/dashboard/operator/logs", get(dashboard_handlers::get_operator_logs))
         // Documentation search API
         .route("/api/v1/docs/search-index", get(handlers::get_search_index))
         // Custom metrics API

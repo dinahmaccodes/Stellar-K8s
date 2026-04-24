@@ -319,7 +319,11 @@ mod tests {
             sidecars: None,
             label_propagation: None,
             custom_network_passphrase: None,
-        nat_traversal: None,
+            nat_traversal: None,
+<<<<<<< four-issues
+=======
+            cross_cloud_failover: None,
+>>>>>>> main
         };
 
         let labels = get_standard_labels(&spec, "my-validator");
@@ -383,7 +387,11 @@ mod tests {
             sidecars: None,
             label_propagation: None,
             custom_network_passphrase: None,
-        nat_traversal: None,
+            nat_traversal: None,
+<<<<<<< four-issues
+=======
+            cross_cloud_failover: None,
+>>>>>>> main
         };
 
         let annotations = get_standard_annotations(&spec);

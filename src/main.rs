@@ -784,10 +784,10 @@ async fn run_generate_runbook(args: GenerateRunbookArgs) -> Result<(), Error> {
 
     // Output to file or stdout
     if let Some(output_path) = args.output {
-        std::fs::write(&output_path, &runbook).map_err(|e| Error::IoError(e))?;
-        println!("Runbook generated successfully: {}", output_path);
+        std::fs::write(&output_path, &runbook).map_err(Error::IoError)?;
+        println!("Runbook generated successfully: {output_path}");
     } else {
-        println!("{}", runbook);
+        println!("{runbook}");
     }
 
     Ok(())
