@@ -290,6 +290,26 @@ pub struct StellarNodeSpec {
     /// to monitor silent failures like slow disk IO and network jitter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ebpf_config: Option<super::types::EbpfConfig>,
+
+    /// Automated secret rotation for database credentials.
+    ///
+    /// When enabled, the operator automatically rotates PostgreSQL passwords
+    /// on a configurable schedule, updating both the database and Kubernetes
+    /// secrets without downtime.
+    ///
+    /// Requires database configuration (either `database` or `managed_database`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_rotation: Option<crate::backup::SecretRotationConfig>,
+
+    /// Automated backup verification via temporary clusters.
+    ///
+    /// When enabled, the operator periodically spins up temporary clusters,
+    /// restores backups, and verifies data integrity to ensure backups are
+    /// recoverable.
+    ///
+    /// Requires backup configuration and sufficient cluster resources.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_verification: Option<crate::backup::BackupVerificationConfig>,
 }
 
 fn default_replicas() -> i32 {
